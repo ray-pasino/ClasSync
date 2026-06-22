@@ -1,0 +1,115 @@
+/* Sleek, brand-aligned toast theme. Bottom-right, soft surface, layered
+   shadow, a thin accent strip per type, and a slim progress bar.
+   Overrides react-toastify v10 — imported last so these rules win. */
+
+:root {
+  --toastify-font-family: 'Inter', sans-serif;
+  --toastify-toast-width: 340px;
+  --toastify-toast-offset: 18px;
+  --toastify-toast-min-height: 56px;
+  --toastify-toast-bd-radius: 14px;
+  --toastify-text-color-light: #252b5f;
+
+  --toastify-color-info: #3b6ef6;
+  --toastify-color-success: #16a34a;
+  --toastify-color-warning: #e7ad29;
+  --toastify-color-error: #e1483f;
+
+  --toastify-icon-color-info: var(--toastify-color-info);
+  --toastify-icon-color-success: var(--toastify-color-success);
+  --toastify-icon-color-warning: var(--toastify-color-warning);
+  --toastify-icon-color-error: var(--toastify-color-error);
+
+  --toastify-color-progress-info: var(--toastify-color-info);
+  --toastify-color-progress-success: var(--toastify-color-success);
+  --toastify-color-progress-warning: var(--toastify-color-warning);
+  --toastify-color-progress-error: var(--toastify-color-error);
+  --toastify-color-progress-light: linear-gradient(90deg, #3b6ef6, #6ea0ff);
+}
+
+.Toastify__toast {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 14px;
+  border: 1px solid rgba(16, 24, 40, 0.06);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.06),
+    0 10px 28px rgba(16, 24, 40, 0.12);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #252b5f;
+}
+
+.Toastify__toast-body {
+  padding: 0;
+  margin: 0;
+  align-items: center;
+}
+
+.Toastify__toast-icon {
+  width: 20px;
+  margin-inline-end: 11px;
+}
+
+/* Thin accent strip on the leading edge, coloured per type. */
+.Toastify__toast::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #3b6ef6;
+}
+.Toastify__toast--success::before {
+  background: #16a34a;
+}
+.Toastify__toast--error::before {
+  background: #e1483f;
+}
+.Toastify__toast--warning::before {
+  background: #e7ad29;
+}
+.Toastify__toast--info::before {
+  background: #3b6ef6;
+}
+
+.Toastify__progress-bar {
+  height: 3px;
+  opacity: 0.85;
+}
+
+.Toastify__close-button {
+  align-self: center;
+  color: #98a2b3;
+  opacity: 0.7;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+.Toastify__close-button:hover {
+  opacity: 1;
+  color: #252b5f;
+}
+
+/* Phones: keep it floating bottom-right with margins instead of edge-to-edge. */
+@media (max-width: 480px) {
+  .Toastify__toast-container {
+    width: calc(100% - 24px);
+    left: auto;
+    right: 12px;
+    bottom: 12px;
+    margin: 0;
+    padding: 0;
+  }
+  .Toastify__toast {
+    margin-bottom: 10px;
+    border-radius: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Toastify__progress-bar {
+    animation: none;
+  }
+}

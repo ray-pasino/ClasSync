@@ -1,0 +1,32 @@
+/* .btn{
+    border: 1px solid #6a6a6a;
+    padding: 10px 5px;
+    color: aliceblue;
+    background-color: brown;
+    padding: 30px 20px;
+    cursor: pointer;
+}
+
+.BTN-container{
+    position: absolute;
+    margin-top: -700px;
+    z-index: 2;
+}
+
+.q-text{
+    position: absolute;
+    margin-top: -750px;
+} */
+
+.welcome-div{
+    background: #F7F8FB;
+    min-height: 100vh;
+    width: 100%;
+}
+
+.login{
+    flex: 1;
+    min-width: 0;
+    min-height: 100vh;
+    width: 100%;
+}

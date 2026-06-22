@@ -1,0 +1,51 @@
+.container {
+    color: #333;
+}
+
+.title{
+    font-size: 11px;
+}
+
+.attribute{
+    font-size:12px;
+}
+
+.reset-password-container{
+    border: 2px solid #f9f9f9;
+    border-radius: 10px;
+    width: 70vw;
+    background-color: #f9f9f9;
+    font-size: 12px;
+}
+
+.heading {
+    border-bottom:1px solid #dfcfcf;
+    padding: 10px;
+}
+
+
+.input-p {
+    background-color: #f9f9f9;
+    border: 1px solid #dfcfcf;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.input-container {
+    padding: 15px;
+}
+
+.active-input{
+    border: 1px solid #252B5F;
+    background-color: #f9f9f9;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.cp-btn{
+    background-color: #272A62;
+    color: #fff;
+    border-radius: 22px;
+    padding: 10px 12px;
+    margin-left: 70px;
+}

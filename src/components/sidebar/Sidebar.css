@@ -1,0 +1,46 @@
+.sidebar {
+  width: 260px;
+  height: 100dvh;
+  align-self: flex-start;
+  overflow: hidden;
+  border-right: 1px solid #E8ECF6;
+  position: sticky;
+  top: 0;
+}
+
+.nav-link {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 220px;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Slim, sleeker rail on phones — admin, student and lecturer all match. */
+  .sidebar {
+    width: 60px;
+  }
+
+  .sidebar .brand .leading-tight,
+  .sidebar nav p,
+  .sidebar .account-label,
+  .sidebar .nav-link span,
+  .sidebar .px-5 {
+    display: none;
+  }
+
+  .sidebar .brand {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .sidebar .nav-link {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}

@@ -1,0 +1,58 @@
+ .banner-info{
+    position: absolute;
+    margin-top: 5px;
+    z-index: 1;
+}
+
+.logo{
+    width: 77px;
+}
+
+.h1{
+    font-size: 20px;
+}
+
+.h2{
+    font-size: 15px;
+}
+
+
+
+.paragraph{
+    font-family: 'Times New Roman', Times, serif;
+    font-style: italic;
+    font-size: 17px;
+}
+
+.p1{
+    font-size: 21px;
+}
+
+.p2{
+    font-size: 17px;
+}
+
+
+@media (min-width:768px) {
+    .h1{
+        font-size: 30px;
+    }
+
+    .h2{
+        font-size: 22px;
+    }
+
+    .logo{
+        width: 94px;
+    }
+
+    .banner-info{
+        z-index: 2;
+    }
+
+    .paragraph{
+        margin-top: 650px;
+        margin-left: 65vw;
+        width: 31vw;
+    }
+}

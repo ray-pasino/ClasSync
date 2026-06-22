@@ -1,0 +1,13 @@
+POST http://localhost:3000/api/lecturer/lecturerregister
+
+ {
+    "name": "John Mensah",
+    "id": 3203040002,
+    "email": "john.mensah@gctu.edu.gh",
+    "password": "password123",
+    "phone": 233200000000,
+    "faculty": "Computing",
+    "department": "Computer Science",
+    "campus": "Main",
+    "course": "Biometric Systems"
+  }

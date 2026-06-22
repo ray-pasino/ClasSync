@@ -1,0 +1,59 @@
+.adminheadergradient{
+    background-image: linear-gradient(to right, #252B5F,  #A39577);
+    height: 10vh;
+    width: 65vw;
+}
+
+.shield{
+    margin-left: 5vw;
+    margin-right: 5vw;
+    gap: 45vw;
+}
+
+.logout-popover{
+    background-color: #FFEAEA;
+    margin-top: -15px;
+    position: absolute;
+    animation: movefromTop 0.3s;
+}
+
+
+@media (min-width:640px) {
+    .shield{
+        gap:65vw;
+    }
+
+}
+
+
+@media (min-width:768px) {
+    .shield{
+        gap:70vw
+    }
+
+    .adminheadergradient{
+        width: auto;
+    }
+}
+
+ @media (min-width:1024px) {
+    .shield{
+        gap:80vw
+    }
+}
+
+@media (min-width:1200px) {
+    .adminheadergradient{
+        width: 83vw;
+    }
+
+    @keyframes movefromTop {
+        0%{
+            margin-top: -40px;
+        }
+
+        100%{
+            margin-top: -15px;
+        }
+    }
+}
