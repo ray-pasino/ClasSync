@@ -6,8 +6,8 @@ import StudentModel from '../../../../models/student';
 
 /**
  * Subscribe the authenticated student to timetable SMS notifications by
- * sending them a confirmation message. Replaces the old client-side Infobip
- * call so the API key is never exposed to the browser.
+ * sending them a confirmation message. Runs server-side so the Arkesel API key
+ * is never exposed to the browser.
  */
 export async function POST(request: Request) {
   const userId = getUserIdFromRequest(request);

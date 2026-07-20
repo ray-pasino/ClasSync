@@ -13,7 +13,10 @@ export async function POST(request: Request) {
     const lecturer = new LecturerModel({
       name: body.name,
       id: body.id,
-      course: body.course,
+      // A lecturer can teach several courses; keep the legacy single `course`
+      // in sync (first course) so older readers still work.
+      courses: Array.isArray(body.courses) ? body.courses.filter(Boolean) : [],
+      course: Array.isArray(body.courses) ? body.courses[0] : body.course,
       phone: body.phone,
       email: body.email,
       password,

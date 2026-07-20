@@ -8,9 +8,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const setclass = new ClassModel({
       className: body.className,
-      course: body.course,
+      courses: body.courses,
       semester: body.semester,
-      meetings: body.meetings,
+      level: body.level ? Number(body.level) : undefined,
       population: body.population,
       unavailablerooms: body.unavailablerooms,
     });

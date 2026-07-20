@@ -20,9 +20,15 @@ import {
   TrendingUp,
   Presentation,
   CalendarOff,
+  Megaphone,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import AlertsFeed from '../../components/alertsfeed/AlertsFeed';
+import NotifyDialog, {
+  type NotifyTarget,
+} from '../../components/notifydialog/NotifyDialog';
+import { cohortLabel } from '../../lib/match';
 
 const WEEK_ORDER = [
   'Monday',
@@ -37,10 +43,13 @@ const WEEK_ORDER = [
 const Lecturerinfo = () => {
   const { url, token } = useContext(StoreContext);
   const [timetable, setTimetable] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [lecturer, setLecturer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Change/cancellation alert dialog: the class it targets (null = closed).
+  const [notifyTarget, setNotifyTarget] = useState<NotifyTarget | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
 
   const fetchTimetable = async () => {
@@ -67,12 +76,74 @@ const Lecturerinfo = () => {
     }
   };
 
+  const fetchAlerts = async () => {
+    try {
+      const response = await axios.get(`${url}/api/lecturer/alerts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.data.success) setAlerts(response.data.alerts || []);
+    } catch (error) {
+      console.error('Error fetching alerts:', error);
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      await Promise.all([fetchTimetable(), fetchLecturerInfo()]);
+      await Promise.all([fetchTimetable(), fetchLecturerInfo(), fetchAlerts()]);
       setLoading(false);
     })();
   }, []);
+
+  // Raise a change/cancellation alert for one of this lecturer's own classes.
+  // Returns true so the dialog closes on success. A cancellation removes this
+  // lecturer's sessions, so refresh the schedule and alerts afterwards.
+  const sendAlert = async ({
+    type,
+    message,
+  }: {
+    type: 'cancellation' | 'change';
+    message: string;
+  }): Promise<boolean> => {
+    if (!notifyTarget) return false;
+    try {
+      const response = await axios.post(
+        `${url}/api/lecturer/alert`,
+        {
+          className: notifyTarget.className,
+          semester: notifyTarget.semester,
+          level: notifyTarget.level,
+          type,
+          message,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.data.success) {
+        const r = response.data.recipients || {};
+        const sms = response.data.sms || {};
+        const smsNote = sms.sent
+          ? ` SMS sent to ${sms.count} number${sms.count === 1 ? '' : 's'}.`
+          : ' Posted in-app (SMS not sent).';
+        toast.success(
+          `${
+            type === 'cancellation' ? 'Class cancelled' : 'Change announced'
+          } — notified ${r.students || 0} student${
+            r.students === 1 ? '' : 's'
+          }.${smsNote}`
+        );
+        await fetchAlerts();
+        if (type === 'cancellation') await fetchTimetable();
+        return true;
+      }
+      toast.error(response.data.message || 'Could not send the alert.');
+      return false;
+    } catch (error: any) {
+      console.error('Error sending alert:', error);
+      toast.error(
+        error?.response?.data?.message || 'Error sending the alert. Please try again.'
+      );
+      return false;
+    }
+  };
 
   const lecturerName: string = lecturer?.name || '';
 
@@ -81,13 +152,16 @@ const Lecturerinfo = () => {
     .flat()
     .filter((item: any) => item?.lecturer === lecturerName);
 
-  // Group sessions by semester → class so the lecturer can read each class
-  // group's grid independently.
+  // Group sessions by semester → cohort (programme + level) so the lecturer can
+  // read each cohort's grid independently and act on the right one.
   const grouped = myItems.reduce((acc: any, item: any) => {
-    const { Semester, className, ...rest } = item;
+    const { Semester, className, level, ...rest } = item;
+    const label = cohortLabel(className, level);
     if (!acc[Semester]) acc[Semester] = {};
-    if (!acc[Semester][className]) acc[Semester][className] = [];
-    acc[Semester][className].push(rest);
+    if (!acc[Semester][label]) {
+      acc[Semester][label] = { className, level, items: [] };
+    }
+    acc[Semester][label].items.push(rest);
     return acc;
   }, {});
 
@@ -295,6 +369,8 @@ const Lecturerinfo = () => {
           </p>
         </header>
 
+        {!loading && <AlertsFeed alerts={alerts} />}
+
         {loading ? (
           /* Skeleton — geometry mirrors the loaded layout. */
           <div className="animate-pulse motion-reduce:animate-none">
@@ -442,7 +518,9 @@ const Lecturerinfo = () => {
 
                         <div className="flex flex-col gap-3">
                           {Object.keys(grouped[semester]).map(
-                            (className, idx) => (
+                            (label, idx) => {
+                              const cohort = grouped[semester][label];
+                              return (
                               <div
                                 key={idx}
                                 className="overflow-hidden rounded-2xl border border-black/8 bg-white shadow-sm"
@@ -450,8 +528,24 @@ const Lecturerinfo = () => {
                                 <div className="flex items-center gap-2 border-b border-black/8 bg-page-bg/50 px-4 py-2.5">
                                   <Users size={14} className="text-accent" />
                                   <h3 className="text-sm font-semibold text-b-blue">
-                                    {className}
+                                    {label}
                                   </h3>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNotifyTarget({
+                                        semester,
+                                        className: cohort.className,
+                                        level: cohort.level,
+                                      })
+                                    }
+                                    aria-label={`Notify or cancel ${label}`}
+                                    title="Notify students of a change or cancel"
+                                    className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg border border-[#E8ECF6] bg-white px-2.5 text-xs font-semibold text-accent transition hover:bg-page-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                                  >
+                                    <Megaphone size={13} />
+                                    <span className="max-sm:hidden">Notify</span>
+                                  </button>
                                 </div>
 
                                 <div className="overflow-x-auto">
@@ -474,7 +568,7 @@ const Lecturerinfo = () => {
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {grouped[semester][className].map(
+                                      {cohort.items.map(
                                         (item: any, index: number) => (
                                           <tr
                                             key={index}
@@ -519,8 +613,8 @@ const Lecturerinfo = () => {
                                   </table>
                                 </div>
                               </div>
-                            )
-                          )}
+                            );
+                          })}
                         </div>
                       </section>
                     ))}
@@ -531,6 +625,18 @@ const Lecturerinfo = () => {
           </>
         )}
       </main>
+
+      {/* Change / cancellation alert dialog for the lecturer's own classes. */}
+      <NotifyDialog
+        target={notifyTarget}
+        onClose={() => setNotifyTarget(null)}
+        onSend={sendAlert}
+        cancelNote={`This cancels your sessions for ${
+          notifyTarget
+            ? cohortLabel(notifyTarget.className, notifyTarget.level)
+            : 'the class'
+        } and notifies its students. Other lecturers' sessions on this class are not affected.`}
+      />
     </div>
   );
 };

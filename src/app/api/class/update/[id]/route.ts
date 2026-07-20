@@ -9,12 +9,17 @@ export async function PUT(request: Request, { params }: { params: { id: string }
     await ClassModel.findByIdAndUpdate(
       params.id,
       {
-        className: body.className,
-        course: body.course,
-        semester: body.semester,
-        meetings: body.meetings,
-        population: body.population,
-        unavailablerooms: body.unavailablerooms,
+        $set: {
+          className: body.className,
+          courses: body.courses,
+          semester: body.semester,
+          level: body.level ? Number(body.level) : undefined,
+          population: body.population,
+          unavailablerooms: body.unavailablerooms,
+        },
+        // Drop the legacy single-course fields once a record is saved via the
+        // multi-course form, so stale data can't leak into the generator.
+        $unset: { course: '', meetings: '' },
       },
       { new: true }
     );

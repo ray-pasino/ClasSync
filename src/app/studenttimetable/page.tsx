@@ -23,6 +23,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { classMatchesStudent, cohortLabel } from '../../lib/match';
+import AlertsFeed from '../../components/alertsfeed/AlertsFeed';
 
 const WEEK_ORDER = [
   'Monday',
@@ -37,7 +39,9 @@ const WEEK_ORDER = [
 const Studentstimetable = () => {
   const { url, token } = useContext(StoreContext);
   const [timetable, setTimetable] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [StudentProgram, setStudentProgram] = useState('');
+  const [studentLevel, setStudentLevel] = useState<number | null>(null);
   const [studentName, setStudentName] = useState('');
   const [loading, setLoading] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
@@ -63,6 +67,9 @@ const Studentstimetable = () => {
       });
       if (response.data.success) {
         setStudentProgram(response.data.data.program);
+        setStudentLevel(
+          response.data.data.level != null ? Number(response.data.data.level) : null
+        );
         setStudentName(response.data.data.name || '');
       }
     } catch (error) {
@@ -70,43 +77,51 @@ const Studentstimetable = () => {
     }
   };
 
+  const fetchAlerts = async () => {
+    try {
+      const response = await axios.get(`${url}/api/student/alerts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.data.success) setAlerts(response.data.alerts || []);
+    } catch (error) {
+      console.error('Error fetching alerts:', error);
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      await Promise.all([fetchTimetable(), fetchStudentInfo()]);
+      await Promise.all([fetchTimetable(), fetchStudentInfo(), fetchAlerts()]);
       setLoading(false);
     })();
   }, []);
 
-  const groupedTimetable = timetable.flat().reduce((acc: any, item: any) => {
-    if (item.className === StudentProgram) {
-      const { Semester, className, ...rest } = item;
-      if (!acc[Semester]) acc[Semester] = {};
-      if (!acc[Semester][className]) acc[Semester][className] = [];
-      acc[Semester][className].push(rest);
-    }
+  // The student's own cohort details, used to match sessions to them.
+  const student = { program: StudentProgram, level: studentLevel };
+
+  // This student's sessions across the whole timetable, matched robustly on
+  // program + level (using each session's explicit level) rather than an exact
+  // className string.
+  const myItems = timetable
+    .flat()
+    .filter((item: any) => classMatchesStudent(item, student));
+
+  // Group the matched sessions by semester → cohort (programme + level),
+  // mirroring the lecturer view.
+  const groupedTimetable = myItems.reduce((acc: any, item: any) => {
+    const { Semester, className, level, ...rest } = item;
+    const label = cohortLabel(className, level);
+    if (!acc[Semester]) acc[Semester] = {};
+    if (!acc[Semester][label]) acc[Semester][label] = [];
+    acc[Semester][label].push(rest);
     return acc;
   }, {});
 
-  const filteredTimetable = Object.keys(groupedTimetable).reduce(
-    (acc: any, semester: string) => {
-      acc[semester] = {
-        [StudentProgram]: groupedTimetable[semester][StudentProgram],
-      };
-      return acc;
-    },
-    {}
-  );
-
   // Day columns derived from the timetable itself, ordered Mon→Sun.
-  const myItems = timetable
-    .flat()
-    .filter((item: any) => item?.className === StudentProgram);
-
   const daysPresent = new Set<string>();
   myItems.forEach((item: any) => item?.day && daysPresent.add(item.day));
   const days = WEEK_ORDER.filter((day) => daysPresent.has(day));
 
-  const isEmpty = Object.keys(filteredTimetable).length === 0;
+  const isEmpty = Object.keys(groupedTimetable).length === 0;
 
   // ---- Insights -----------------------------------------------------------
   const totalSessions = myItems.length;
@@ -302,6 +317,8 @@ const Studentstimetable = () => {
           </p>
         </header>
 
+        {!loading && <AlertsFeed alerts={alerts} />}
+
         {loading ? (
           /* Skeleton — geometry mirrors the loaded layout (KPI cards, Today,
              timetable). One pulse on the wrapper; reduced-motion safe. */
@@ -461,7 +478,7 @@ const Studentstimetable = () => {
             <div className="px-0.5 pt-0.5">
             <div ref={printRef} className="bg-[#F7F8FB]">
               <div className="flex flex-col gap-5">
-                {Object.keys(filteredTimetable).map((semester, index) => (
+                {Object.keys(groupedTimetable).map((semester, index) => (
                   <section key={index}>
                     <div className="mb-2.5 flex items-center gap-3">
                       <h2 className="text-sm font-bold uppercase tracking-wide text-b-blue">
@@ -471,7 +488,7 @@ const Studentstimetable = () => {
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      {Object.keys(filteredTimetable[semester]).map(
+                      {Object.keys(groupedTimetable[semester]).map(
                         (className, idx) => (
                           <div
                             key={idx}
@@ -503,7 +520,7 @@ const Studentstimetable = () => {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {filteredTimetable[semester][className].map(
+                                  {groupedTimetable[semester][className].map(
                                     (item: any, index: number) => (
                                       <tr
                                         key={index}

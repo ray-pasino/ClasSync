@@ -17,10 +17,16 @@ const Lecturersavailabe = () => {
   const [data, setData] = useState({
     id: "",
     name: "",
-    course: "",
+    courses: [] as string[],
     phone: "",
     email: ""
   });
+
+// The courses a lecturer teaches, tolerant of the legacy single `course` field.
+const lecturerCourseList = (l: any): string[] => {
+  if (Array.isArray(l.courses) && l.courses.length) return l.courses.filter(Boolean);
+  return l.course ? [l.course] : [];
+};
 
 
 const handleEdit = (id: any) => {
@@ -29,7 +35,7 @@ const handleEdit = (id: any) => {
     setData({
       id: selectedLecturer.id,
       name: selectedLecturer.name,
-      course: selectedLecturer.course,
+      courses: lecturerCourseList(selectedLecturer),
       phone: selectedLecturer.phone,
       email: selectedLecturer.email
     });
@@ -49,6 +55,14 @@ const onChangeHandler = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectE
   setData(data => ({ ...data, [name]: value }));
 };
 
+// A lecturer can be assigned several courses from the multi-select.
+const handleCoursesChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+  const selected = Array.from(event.target.selectedOptions, (o) => o.value).filter(
+    (v) => v !== ""
+  );
+  setData((data) => ({ ...data, courses: selected }));
+};
+
 const onSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
   event.preventDefault();
 
@@ -62,7 +76,7 @@ const onSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
       setData({
         id: "",
         name: "",
-        course: "",
+        courses: [],
         phone: "",
         email: ""
       });
@@ -123,7 +137,7 @@ if (response.data.success) {
   setData({
     id: "",
     name: "",
-    course: "",
+    courses: [],
     phone: "",
     email: ""
   });
@@ -201,20 +215,23 @@ useEffect(() => {
       </div>
       <div>
         <label htmlFor="course-select" className="block text-sm font-semibold text-b-blue mb-1.5">
-          Course
+          Courses
         </label>
         <select
-          name="course"
+          name="courses"
           id="course-select"
-          className={fieldClass}
-          onChange={onChangeHandler}
-          value={data.course}
+          className={`${fieldClass} min-h-[120px]`}
+          onChange={handleCoursesChange}
+          value={data.courses}
+          multiple
         >
-          <option value="">Select a course</option>
           {courses.map((course: any, i: number) => (
             <option key={i} value={course}>{course}</option>
           ))}
         </select>
+        <p className="text-[11px] text-gray-400 font-light mt-1.5">
+          Hold Ctrl (or Cmd) to select every course this lecturer teaches.
+        </p>
       </div>
       <div>
         <label htmlFor="phone" className="block text-sm font-semibold text-b-blue mb-1.5">
@@ -337,7 +354,9 @@ useEffect(() => {
                         <tr key={index} className="border-b border-page-bg last:border-0">
                           <td className="py-4 pr-4 font-medium text-b-blue">{lecturer.id}</td>
                           <td className="py-4 pr-4 text-gray-600">{lecturer.name}</td>
-                          <td className="py-4 pr-4 text-gray-600">{lecturer.course}</td>
+                          <td className="py-4 pr-4 text-gray-600">
+                            {lecturerCourseList(lecturer).join(', ') || '—'}
+                          </td>
                           <td className="py-4 pr-4 text-gray-600">{lecturer.phone}</td>
                           <td className="py-4 pr-4 text-gray-600">{lecturer.email}</td>
                           <td className="py-4">
@@ -374,7 +393,7 @@ useEffect(() => {
                         <div className="min-w-0">
                           <p className="font-semibold text-b-blue truncate">{lecturer.name}</p>
                           <p className="text-xs text-gray-400 font-light mt-0.5">
-                            {lecturer.id} · {lecturer.course}
+                            {lecturer.id} · {lecturerCourseList(lecturer).join(', ') || '—'}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

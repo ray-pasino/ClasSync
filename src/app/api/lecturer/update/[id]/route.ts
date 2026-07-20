@@ -6,12 +6,19 @@ export async function PUT(request: Request, { params }: { params: { id: string }
   try {
     await connectDB();
     const body = await request.json();
+    const courses = Array.isArray(body.courses)
+      ? body.courses.filter(Boolean)
+      : undefined;
     await LecturerModel.findByIdAndUpdate(
       params.id,
       {
         name: body.name,
         id: body.id,
-        course: body.course,
+        // Persist the multi-course list; keep legacy `course` as the first one
+        // so anything still reading it stays correct.
+        ...(courses
+          ? { courses, course: courses[0] }
+          : { course: body.course }),
         phone: body.phone,
         email: body.email,
       },

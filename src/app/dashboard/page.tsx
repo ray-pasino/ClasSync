@@ -26,7 +26,17 @@ import {
   Image as ImageIcon,
   Printer,
   X,
+  AlertTriangle,
+  CheckCircle2,
+  Trash2,
+  Megaphone,
 } from 'lucide-react';
+import NotifyDialog, {
+  type NotifyTarget,
+} from '../../components/notifydialog/NotifyDialog';
+import { cohortLabel } from '../../lib/match';
+
+type GenReport = { unscheduled: any[]; warnings: string[] };
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -84,8 +94,18 @@ const Dashboard = () => {
   const [showTimetable, setShowTimetable] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Confirmation dialog for destructive delete actions (null = closed).
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
   // Key of the per-class export menu that's currently open (null = none).
   const [cardMenu, setCardMenu] = useState<string | null>(null);
+  // Change/cancellation alert dialog: the class it targets (null = closed).
+  const [notifyTarget, setNotifyTarget] = useState<NotifyTarget | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
   // Refs to each individual class card, keyed by `${semester}__${className}`.
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -94,6 +114,9 @@ const Dashboard = () => {
   const [courseCount, setCourseCount] = useState(0);
   const [classCount, setClassCount] = useState(0);
   const [timetable, setTimetable] = useState<any[]>([]);
+  // Diagnostics from the most recent generation (classes that couldn't be
+  // placed, and soft warnings). Shown in the timetable modal.
+  const [report, setReport] = useState<GenReport>({ unscheduled: [], warnings: [] });
   const [adminName, setAdminName] = useState('');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [loadingCounts, setLoadingCounts] = useState(true);
@@ -101,11 +124,17 @@ const Dashboard = () => {
   const [data, setData] = useState({
     name: '',
     semester: '',
+    programme: '',
     days:
       (typeof window !== 'undefined' &&
         JSON.parse(localStorage.getItem('selectedDays') || 'null')) ||
       [],
   });
+  // Programme options (distinct class names) for the generate modal.
+  const [programmes, setProgrammes] = useState<string[]>([]);
+  // Whether the admin has hand-edited the timetable name, which stops it from
+  // being auto-filled from the programme + semester.
+  const [nameEdited, setNameEdited] = useState(false);
 
   // Fetch resource counts
   const fetchCounts = async () => {
@@ -140,6 +169,25 @@ const Dashboard = () => {
     }
   };
 
+  // Fetch the distinct programme (class) names for the generate modal.
+  const fetchProgrammes = async () => {
+    try {
+      const response = await axios.get(`${url}/api/class/list`);
+      if (response.data.success) {
+        const names = Array.from(
+          new Set(
+            (response.data.data || [])
+              .map((c: any) => c.className)
+              .filter(Boolean)
+          )
+        ) as string[];
+        setProgrammes(names);
+      }
+    } catch (error) {
+      console.error('Error fetching programmes:', error);
+    }
+  };
+
   // Fetch the logged-in admin's name
   const fetchAdminInfo = async () => {
     try {
@@ -158,7 +206,28 @@ const Dashboard = () => {
     event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value } = event.target;
+    // Once the admin types their own name, stop auto-filling it.
+    if (name === 'name') setNameEdited(true);
     setData((prevData) => ({ ...prevData, [name]: value }));
+  };
+
+  // Auto-fill the timetable name from the chosen programme + semester until the
+  // admin edits it themselves. "BSc IT — First Semester", or a generic label
+  // when generating all programmes.
+  useEffect(() => {
+    if (nameEdited) return;
+    const auto = data.programme
+      ? `${data.programme}${data.semester ? ` — ${data.semester}` : ''}`
+      : data.semester
+      ? `${data.semester} Timetable`
+      : '';
+    setData((prev) => (prev.name === auto ? prev : { ...prev, name: auto }));
+  }, [data.programme, data.semester, nameEdited]);
+
+  // Open the generate modal with a fresh auto-named form.
+  const openGenerate = () => {
+    setNameEdited(false);
+    setButtonClicked(true);
   };
 
   const handleDayChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -186,7 +255,18 @@ const Dashboard = () => {
       });
 
       if (response.data.success) {
-        toast.success('Timetable generated successfully!');
+        const unscheduled = response.data.unscheduled || [];
+        const warnings = response.data.warnings || [];
+        setReport({ unscheduled, warnings });
+        if (unscheduled.length > 0) {
+          toast.warn(
+            `Timetable generated — ${unscheduled.length} class${
+              unscheduled.length > 1 ? 'es' : ''
+            } couldn't be fully scheduled.`
+          );
+        } else {
+          toast.success('Timetable generated successfully!');
+        }
         setButtonClicked(false);
         await fetchTimetable();
         setShowTimetable(true);
@@ -201,11 +281,17 @@ const Dashboard = () => {
   };
 
   // Flatten and group timetable data by semester -> class
+  // Group by semester → cohort (programme + level), so two levels of the same
+  // programme read as separate cards and per-cohort actions target the right
+  // one. Each entry keeps its className + level for delete/notify.
   const groupedTimetable = timetable.flat().reduce((acc: any, item: any) => {
-    const { Semester, className, ...rest } = item;
+    const { Semester, className, level, ...rest } = item;
+    const label = cohortLabel(className, level);
     if (!acc[Semester]) acc[Semester] = {};
-    if (!acc[Semester][className]) acc[Semester][className] = [];
-    acc[Semester][className].push(rest);
+    if (!acc[Semester][label]) {
+      acc[Semester][label] = { className, level, items: [] };
+    }
+    acc[Semester][label].items.push(rest);
     return acc;
   }, {});
   const semesterCount = Object.keys(groupedTimetable).length;
@@ -282,9 +368,137 @@ const Dashboard = () => {
     await exportNode(cardRefs.current[key], type, slugify(baseName));
   };
 
+  // ---- Delete ------------------------------------------------------------
+  // Perform the deletion. `body` selects the scope:
+  //   { scope: 'all' } | { semester } | { semester, className }
+  const runDelete = async (
+    body: Record<string, any>,
+    successMsg: string,
+    after?: () => void
+  ) => {
+    setConfirmDialog(null);
+    setDeleting(true);
+    try {
+      const response = await axios.delete(`${url}/api/timetable/timetable`, {
+        data: body,
+      });
+      if (response.data.success) {
+        toast.success(successMsg);
+        // Clear any stale generation report and reload the remaining timetable.
+        setReport({ unscheduled: [], warnings: [] });
+        await fetchTimetable();
+        after?.();
+      } else {
+        toast.error(response.data.message || 'Could not delete.');
+      }
+    } catch (error) {
+      console.error('Error deleting timetable:', error);
+      toast.error('Error deleting the timetable. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteAll = () =>
+    setConfirmDialog({
+      title: 'Delete all timetables?',
+      message:
+        'This removes every generated timetable. This action cannot be undone.',
+      confirmLabel: 'Delete All',
+      onConfirm: () =>
+        runDelete({ scope: 'all' }, 'All timetables deleted', () =>
+          setShowTimetable(false)
+        ),
+    });
+
+  const handleDeleteSemester = (semester: string) =>
+    setConfirmDialog({
+      title: `Delete "${semester}"?`,
+      message: `All classes in the ${semester} timetable will be removed. This cannot be undone.`,
+      confirmLabel: 'Delete Semester',
+      onConfirm: () =>
+        runDelete({ semester }, `${semester} timetable deleted`),
+    });
+
+  const handleDeleteClass = (
+    semester: string,
+    cohort: { className: string; level?: number },
+    label: string
+  ) =>
+    setConfirmDialog({
+      title: `Delete "${label}"?`,
+      message: `This removes ${label} from the ${semester} timetable. This cannot be undone.`,
+      confirmLabel: 'Delete Class',
+      onConfirm: () =>
+        runDelete(
+          {
+            semester,
+            className: cohort.className,
+            ...(cohort.level != null ? { level: cohort.level } : {}),
+          },
+          `${label} deleted`
+        ),
+    });
+
+  // ---- Change / cancellation alerts --------------------------------------
+  const openNotify = (
+    semester: string,
+    cohort: { className: string; level?: number }
+  ) =>
+    setNotifyTarget({
+      semester,
+      className: cohort.className,
+      level: cohort.level,
+    });
+
+  // Dispatch the alert; returns true so the dialog closes on success. A
+  // cancellation removes the class's sessions, so refresh the view afterwards.
+  const sendAlert = async ({
+    type,
+    message,
+  }: {
+    type: 'cancellation' | 'change';
+    message: string;
+  }): Promise<boolean> => {
+    if (!notifyTarget) return false;
+    try {
+      const response = await axios.post(`${url}/api/timetable/alert`, {
+        className: notifyTarget.className,
+        semester: notifyTarget.semester,
+        level: notifyTarget.level,
+        type,
+        message,
+      });
+      if (response.data.success) {
+        const r = response.data.recipients || {};
+        const sms = response.data.sms || {};
+        const who = `${r.students || 0} student${
+          r.students === 1 ? '' : 's'
+        } and ${r.lecturers || 0} lecturer${r.lecturers === 1 ? '' : 's'}`;
+        const smsNote = sms.sent
+          ? ` SMS sent to ${sms.count} number${sms.count === 1 ? '' : 's'}.`
+          : ' Posted in-app (SMS not sent).';
+        toast.success(
+          `${
+            type === 'cancellation' ? 'Class cancelled' : 'Change announced'
+          } — notified ${who}.${smsNote}`
+        );
+        if (type === 'cancellation') await fetchTimetable();
+        return true;
+      }
+      toast.error(response.data.message || 'Could not send the alert.');
+      return false;
+    } catch (error) {
+      console.error('Error sending alert:', error);
+      toast.error('Error sending the alert. Please try again.');
+      return false;
+    }
+  };
+
   useEffect(() => {
     fetchCounts();
     fetchTimetable();
+    fetchProgrammes();
   }, []);
 
   useEffect(() => {
@@ -506,7 +720,7 @@ const Dashboard = () => {
                   </p>
                 </div>
                 <button
-                  onClick={() => setButtonClicked(true)}
+                  onClick={openGenerate}
                   className="mt-6 bg-gctu-gold text-gold-ink font-semibold rounded-xl px-5 py-3 w-fit hover:brightness-105 transition"
                 >
                   Create Timetable
@@ -537,7 +751,7 @@ const Dashboard = () => {
                   <Skeleton className="h-12 w-40 rounded-xl shrink-0" />
                 ) : timetable.length === 0 ? (
                   <button
-                    onClick={() => setButtonClicked(true)}
+                    onClick={openGenerate}
                     className="rounded-xl px-5 py-3 font-semibold text-white bg-accent hover:brightness-105 transition w-fit"
                   >
                     Create Timetable
@@ -585,12 +799,12 @@ const Dashboard = () => {
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {Object.keys(groupedTimetable[semester]).map((className) => (
+                        {Object.keys(groupedTimetable[semester]).map((label) => (
                           <span
-                            key={className}
+                            key={label}
                             className="text-xs font-medium text-gray-600 bg-page-bg rounded-lg px-3 py-1.5"
                           >
-                            {className}
+                            {label}
                           </span>
                         ))}
                       </div>
@@ -734,9 +948,33 @@ const Dashboard = () => {
                   onChange={onChangeHandler}
                 >
                   <option value="">Select Academic Period</option>
-                  <option value="Semester 1">Semester 1</option>
-                  <option value="Semester 2">Semester 2</option>
+                  <option value="First Semester">First Semester</option>
+                  <option value="Second Semester">Second Semester</option>
                 </select>
+              </div>
+              <div>
+                <label htmlFor="programme" className="block text-sm font-semibold text-b-blue mb-1.5">
+                  Programme
+                </label>
+                <select
+                  name="programme"
+                  id="programme"
+                  className="modal-field"
+                  value={data.programme}
+                  onChange={onChangeHandler}
+                >
+                  <option value="">All programmes</option>
+                  {programmes.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 font-light mt-1.5">
+                  Builds every level of the chosen programme and merges it into
+                  the timetable, keeping other programmes clash-free. Pick “All
+                  programmes” to (re)build the whole semester.
+                </p>
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-b-blue mb-2">Select Days</h3>
@@ -793,6 +1031,17 @@ const Dashboard = () => {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                {timetable.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteAll}
+                    disabled={deleting || exporting}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white/15 px-3.5 text-[13px] font-semibold text-white transition hover:bg-red-500/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Trash2 size={13} />
+                    <span>{deleting ? 'Deleting…' : 'Delete All'}</span>
+                  </button>
+                )}
                 {timetable.length > 0 && (
                   <div className="relative">
                     <button
@@ -854,6 +1103,50 @@ const Dashboard = () => {
                 </button>
               </div>
             </div>
+            {/* Generation report — kept outside printRef so it isn't exported. */}
+            {(report.unscheduled.length > 0 || report.warnings.length > 0) && (
+              <div className="px-6 pt-5">
+                {report.unscheduled.length > 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="flex items-center gap-2 text-amber-800">
+                      <AlertTriangle size={18} className="shrink-0" />
+                      <p className="font-semibold text-sm">
+                        {report.unscheduled.length} class
+                        {report.unscheduled.length > 1 ? 'es' : ''} couldn&apos;t be
+                        fully scheduled
+                      </p>
+                    </div>
+                    <ul className="mt-3 space-y-2">
+                      {report.unscheduled.map((u: any, i: number) => (
+                        <li key={i} className="text-xs text-amber-900/90 leading-relaxed">
+                          <span className="font-semibold">{u.className}</span>{' '}
+                          <span className="text-amber-800/70">
+                            ({u.course} · placed {u.placed}/{u.needed})
+                          </span>
+                          <br />
+                          {u.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {report.warnings.length > 0 && (
+                  <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <div className="flex items-center gap-2 text-accent">
+                      <CheckCircle2 size={18} className="shrink-0" />
+                      <p className="font-semibold text-sm">Notes</p>
+                    </div>
+                    <ul className="mt-2 space-y-1.5 list-disc pl-5">
+                      {report.warnings.map((w: string, i: number) => (
+                        <li key={i} className="text-xs text-b-blue/80 leading-relaxed">
+                          {w}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
             <div ref={printRef} className="p-6">
               {timetable.length === 0 ? (
                 <div className="text-center py-10 text-gray-400">
@@ -865,16 +1158,26 @@ const Dashboard = () => {
               ) : (
                 Object.keys(groupedTimetable).map((semester, index) => (
                   <div key={index} className="mb-8 last:mb-0">
-                    <h3 className="text-base font-semibold text-b-blue mb-3">
-                      {semester}
-                    </h3>
-                    {Object.keys(groupedTimetable[semester]).map((className, idx) => {
-                      const { days, times, cell } = buildGrid(
-                        groupedTimetable[semester][className]
-                      );
-                      const cardKey = `${semester}__${className}`;
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h3 className="text-base font-semibold text-b-blue">
+                        {semester}
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSemester(semester)}
+                        disabled={deleting}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Trash2 size={13} />
+                        <span className="max-sm:hidden">Delete semester</span>
+                      </button>
+                    </div>
+                    {Object.keys(groupedTimetable[semester]).map((label, idx) => {
+                      const cohort = groupedTimetable[semester][label];
+                      const { days, times, cell } = buildGrid(cohort.items);
+                      const cardKey = `${semester}__${label}`;
                       const cardOpen = cardMenu === cardKey;
-                      const cardName = `${semester} ${className}`;
+                      const cardName = `${semester} ${label}`;
                       return (
                         <div key={idx} className="mb-5 flex items-start gap-2">
                           <div
@@ -884,7 +1187,7 @@ const Dashboard = () => {
                             className="flex-1 min-w-0 bg-white"
                           >
                             <h4 className="font-medium text-gray-600 mb-2">
-                              {className}
+                              {label}
                             </h4>
                             <div className="overflow-x-auto rounded-xl border border-[#E8ECF6]">
                               <table className="timetable-table">
@@ -935,7 +1238,7 @@ const Dashboard = () => {
                                 setCardMenu(cardOpen ? null : cardKey)
                               }
                               disabled={exporting}
-                              aria-label={`Export ${className}`}
+                              aria-label={`Export ${label}`}
                               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#E8ECF6] bg-white px-3 text-xs font-semibold text-b-blue transition hover:bg-page-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               <Download size={13} />
@@ -985,6 +1288,29 @@ const Dashboard = () => {
                               </>
                             )}
                           </div>
+
+                          {/* Per-class notify / cancel */}
+                          <button
+                            type="button"
+                            onClick={() => openNotify(semester, cohort)}
+                            disabled={deleting}
+                            aria-label={`Notify or cancel ${label}`}
+                            title="Notify of a change or cancel"
+                            className="inline-flex h-8 w-8 shrink-0 mt-0.5 items-center justify-center rounded-lg border border-[#E8ECF6] bg-white text-accent transition hover:bg-page-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Megaphone size={14} />
+                          </button>
+
+                          {/* Per-class delete */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteClass(semester, cohort, label)}
+                            disabled={deleting}
+                            aria-label={`Delete ${label}`}
+                            className="inline-flex h-8 w-8 shrink-0 mt-0.5 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       );
                     })}
@@ -995,6 +1321,68 @@ const Dashboard = () => {
           </div>
         </>
       )}
+
+      {/* Delete confirmation dialog — sits above the timetable modal. */}
+      {confirmDialog && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[rgba(15,18,45,0.55)] backdrop-blur-sm"
+          onClick={() => !deleting && setConfirmDialog(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden"
+            style={{ animation: 'modal-pop 0.18s ease-out' }}
+            onClick={(e) => e.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+          >
+            <div className="p-6">
+              <div className="flex items-start gap-3">
+                <span className="h-11 w-11 shrink-0 rounded-full bg-red-50 flex items-center justify-center text-red-600">
+                  <AlertTriangle size={22} />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="font-semibold text-b-blue text-lg leading-snug">
+                    {confirmDialog.title}
+                  </h2>
+                  <p className="text-sm text-gray-500 font-light mt-1.5 leading-relaxed">
+                    {confirmDialog.message}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog(null)}
+                  disabled={deleting}
+                  className="flex-1 rounded-xl py-3 font-semibold text-gray-600 bg-page-bg hover:bg-gray-100 transition disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDialog.onConfirm}
+                  disabled={deleting}
+                  className="flex-1 rounded-xl py-3 font-semibold text-white bg-red-600 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {deleting ? 'Deleting…' : confirmDialog.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change / cancellation alert dialog — sits above the timetable modal. */}
+      <NotifyDialog
+        target={notifyTarget}
+        onClose={() => setNotifyTarget(null)}
+        onSend={sendAlert}
+        cancelNote={`This removes ${
+          notifyTarget
+            ? cohortLabel(notifyTarget.className, notifyTarget.level)
+            : 'the class'
+        } from the timetable and notifies its students and lecturer(s).`}
+      />
     </div>
   );
 };

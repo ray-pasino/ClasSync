@@ -9,7 +9,11 @@ const lecturerSchema = new mongoose.Schema({
   faculty: { type: String },
   department: { type: String },
   campus: { type: String },
-  course: { type: String, required: true },
+  // A lecturer can teach several courses, each stored by course name.
+  courses: { type: [String], default: [] },
+  // Legacy single-course field — kept optional so older records still load and
+  // schedule. New records use `courses`.
+  course: { type: String },
 });
 
 const LecturerModel = (mongoose.models.lecturer ||

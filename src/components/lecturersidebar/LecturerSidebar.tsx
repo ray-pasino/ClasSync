@@ -39,7 +39,7 @@ const LecturerSidebar = ({
     window.matchMedia('(max-width: 768px)').matches;
 
   // Toggle daily SMS reminders. Enabling asks the backend to send a
-  // confirmation text; the Infobip API key lives only on the server.
+  // confirmation text; the Arkesel API key lives only on the server.
   const handleSmsToggle = async () => {
     const next = !smsOn;
     setSmsOn(next);

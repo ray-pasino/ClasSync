@@ -7,20 +7,38 @@ import { StoreContext } from '../../context/Storecontext';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
+type CourseRow = { course: string; meetings: string };
+
+// Fresh, empty form state. A factory so each reset gets its own nested arrays.
+const emptyClass = () => ({
+  className: "",
+  semester: "",
+  level: "",
+  population: "",
+  unavailablerooms: [] as string[],
+  courses: [{ course: "", meetings: "1" }] as CourseRow[],
+});
+
+// The list of courses a class record takes, tolerant of the legacy single
+// `course` field on older records.
+const classCourseList = (c: any): CourseRow[] => {
+  if (Array.isArray(c.courses) && c.courses.length) {
+    return c.courses.map((x: any) => ({
+      course: x.course,
+      meetings: String(x.meetings ?? "1"),
+    }));
+  }
+  if (c.course) return [{ course: c.course, meetings: String(c.meetings ?? "1") }];
+  return [];
+};
+
 const Classes = () => {
   const { url } = useContext(StoreContext);
   const [Clclicked, setClClicked] = useState(false);
   const [edit, setEdit] = useState(false);
   const [editClassId, setEditClassId] = useState<any>(null);
 
-  const [data, setData] = useState({
-    className: "",
-    course: "",
-    semester: "",
-    meetings: "",
-    population: "",
-    unavailablerooms: [] as string[]
-  });
+  const [data, setData] = useState(emptyClass);
 
   const onChangeHandler = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = event.target;
@@ -35,23 +53,43 @@ const Classes = () => {
     setData(data => ({ ...data, unavailablerooms: selectedRooms }));
   };
 
+  // ---- Course rows -------------------------------------------------------
+  const updateCourseRow = (index: number, field: keyof CourseRow, value: string) => {
+    setData(prev => ({
+      ...prev,
+      courses: prev.courses.map((row, i) =>
+        i === index ? { ...row, [field]: value } : row
+      ),
+    }));
+  };
+
+  const addCourseRow = () =>
+    setData(prev => ({ ...prev, courses: [...prev.courses, { course: "", meetings: "1" }] }));
+
+  const removeCourseRow = (index: number) =>
+    setData(prev => ({
+      ...prev,
+      // Always keep at least one row.
+      courses: prev.courses.length === 1 ? prev.courses : prev.courses.filter((_, i) => i !== index),
+    }));
+
   const onSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const response = await axios.post(`${url}/api/class/add`, data, {
+
+    const courses = data.courses.filter((c) => c.course);
+    if (!data.className || !data.semester || courses.length === 0) {
+      toast.error('Add a class name, academic period, and at least one course.');
+      return;
+    }
+
+    const response = await axios.post(`${url}/api/class/add`, { ...data, courses }, {
       headers: {
         'Content-Type': 'application/json'
       }
     });
 
     if (response.data.success) {
-      setData({
-        className: "",
-        course: "",
-        semester: "",
-        meetings: "",
-        population: "",
-        unavailablerooms: []
-      });
+      setData(emptyClass());
       toast.success(response.data.message);
       fetchList();
       handleClosed();
@@ -74,7 +112,14 @@ const Classes = () => {
 
   const onEditSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const response = await axios.put(`${url}/api/class/update/${editClassId}`, data, {
+
+    const courses = data.courses.filter((c) => c.course);
+    if (!data.className || !data.semester || courses.length === 0) {
+      toast.error('Add a class name, academic period, and at least one course.');
+      return;
+    }
+
+    const response = await axios.put(`${url}/api/class/update/${editClassId}`, { ...data, courses }, {
       headers: {
         'Content-Type': 'application/json'
       }
@@ -82,14 +127,7 @@ const Classes = () => {
 
     if (response.data.success) {
       toast.success(response.data.message);
-      setData({
-        className: "",
-        course: "",
-        semester: "",
-        meetings: "",
-        population: "",
-        unavailablerooms: []
-      });
+      setData(emptyClass());
       fetchList();
       handleCloseEdit();
     } else {
@@ -112,13 +150,14 @@ const Classes = () => {
   const handleEdit = (id: any) => {
     const selectedClass = list.find((lecture: any) => lecture._id === id);
     if (selectedClass) {
+      const courses = classCourseList(selectedClass);
       setData({
-        className: selectedClass.className,
-        course: selectedClass.course,
-        semester: selectedClass.semester,
-        meetings: selectedClass.meetings,
-        population: selectedClass.population,
-        unavailablerooms: selectedClass.unavailablerooms
+        className: selectedClass.className || "",
+        semester: selectedClass.semester || "",
+        level: selectedClass.level != null ? String(selectedClass.level) : "",
+        population: selectedClass.population != null ? String(selectedClass.population) : "",
+        unavailablerooms: selectedClass.unavailablerooms || [],
+        courses: courses.length ? courses : [{ course: "", meetings: "1" }],
       });
       setEditClassId(id);
       setEdit(true);
@@ -173,6 +212,10 @@ const Classes = () => {
   // Shared modal field styling (matches the dashboard's generate modal).
   const fieldClass =
     'w-full border border-[#D8DEEC] rounded-[10px] px-3.5 py-3 bg-[#F7F9FD] text-sm text-b-blue focus:outline-none focus:border-accent focus:bg-white transition-colors';
+  // Same styling without a fixed width, for the flexed course rows (so the
+  // course dropdown can grow and the meetings selector stays a narrow fixed box).
+  const rowFieldClass =
+    'border border-[#D8DEEC] rounded-[10px] px-3.5 py-3 bg-[#F7F9FD] text-sm text-b-blue focus:outline-none focus:border-accent focus:bg-white transition-colors';
 
   const renderClassForm = (
     onSubmit: (e: React.FormEvent<HTMLFormElement>) => void,
@@ -191,19 +234,66 @@ const Classes = () => {
           name="className"
           onChange={onChangeHandler}
           value={data.className}
-          placeholder="e.g. BSc IT Level 100"
+          placeholder="e.g. BSc Information Technology"
         />
+        <p className="text-[11px] text-gray-400 font-light mt-1.5">
+          The programme name. Pick the level below — you can reuse the same
+          programme name for different levels.
+        </p>
       </div>
       <div>
-        <label htmlFor="course" className="block text-sm font-semibold text-b-blue mb-1.5">
-          Course
-        </label>
-        <select className={fieldClass} id="course" name="course" onChange={onChangeHandler} value={data.course}>
-          <option value="">Select a course</option>
-          {courses.map((course: any, i: number) => (
-            <option key={i} value={course}>{course}</option>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-sm font-semibold text-b-blue">
+            Courses &amp; Meetings / Week
+          </label>
+          <button
+            type="button"
+            onClick={addCourseRow}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:brightness-110"
+          >
+            <Plus size={14} /> Add course
+          </button>
+        </div>
+        <div className="space-y-2">
+          {data.courses.map((row, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                className={`${rowFieldClass} flex-1 min-w-0`}
+                value={row.course}
+                onChange={(e) => updateCourseRow(i, 'course', e.target.value)}
+                aria-label={`Course ${i + 1}`}
+              >
+                <option value="">Select a course</option>
+                {courses.map((course: any, ci: number) => (
+                  <option key={ci} value={course}>{course}</option>
+                ))}
+              </select>
+              <select
+                className={`${rowFieldClass} w-[88px] shrink-0`}
+                value={row.meetings}
+                onChange={(e) => updateCourseRow(i, 'meetings', e.target.value)}
+                aria-label={`Meetings per week for course ${i + 1}`}
+                title="Meetings per week"
+              >
+                {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={String(n)}>{n}×</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => removeCourseRow(i)}
+                disabled={data.courses.length === 1}
+                aria-label="Remove course"
+                className="h-10 w-10 shrink-0 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))}
-        </select>
+        </div>
+        <p className="text-[11px] text-gray-400 font-light mt-1.5">
+          Add every course this class takes, and how many times a week each meets.
+        </p>
       </div>
       <div>
         <label htmlFor="semester" className="block text-sm font-semibold text-b-blue mb-1.5">
@@ -216,15 +306,15 @@ const Classes = () => {
         </select>
       </div>
       <div>
-        <label htmlFor="meetings" className="block text-sm font-semibold text-b-blue mb-1.5">
-          Meetings Per Week
+        <label htmlFor="level" className="block text-sm font-semibold text-b-blue mb-1.5">
+          Level
         </label>
-        <select className={fieldClass} id="meetings" name="meetings" onChange={onChangeHandler} value={data.meetings}>
-          <option value="">Select number of meetings</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
+        <select className={fieldClass} id="level" name="level" onChange={onChangeHandler} value={data.level}>
+          <option value="">Select a level (optional)</option>
+          <option value="100">Level 100</option>
+          <option value="200">Level 200</option>
+          <option value="300">Level 300</option>
+          <option value="400">Level 400</option>
         </select>
       </div>
       <div>
@@ -356,8 +446,15 @@ const Classes = () => {
                           <td className="py-4 pr-4 font-medium text-b-blue">{sclass.className}</td>
                           <td className="py-4 pr-4 text-gray-600">{sclass.population}</td>
                           <td className="py-4 pr-4 text-gray-600">
-                            <p>{sclass.semester}</p>
-                            <p className="text-xs text-gray-400 font-light">{sclass.course}</p>
+                            <p>
+                              {sclass.semester}
+                              {sclass.level ? ` · Level ${sclass.level}` : ''}
+                            </p>
+                            <p className="text-xs text-gray-400 font-light">
+                              {classCourseList(sclass)
+                                .map((c) => `${c.course} (${c.meetings}×)`)
+                                .join(', ') || '—'}
+                            </p>
                           </td>
                           <td className="py-4 pr-4 text-gray-600">
                             {sclass.unavailablerooms.join(', ')}
@@ -396,7 +493,9 @@ const Classes = () => {
                         <div className="min-w-0">
                           <p className="font-semibold text-b-blue truncate">{sclass.className}</p>
                           <p className="text-xs text-gray-400 font-light mt-0.5">
-                            {sclass.semester} · {sclass.course}
+                            {sclass.semester}
+                            {sclass.level ? ` · Level ${sclass.level}` : ''} ·{' '}
+                            {classCourseList(sclass).map((c) => c.course).join(', ') || '—'}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
