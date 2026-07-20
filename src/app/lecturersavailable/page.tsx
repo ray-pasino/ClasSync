@@ -2,7 +2,7 @@
 
 import React, { useState, useContext, useEffect } from 'react';
 import Sidebar from '../../components/sidebar/Sidebar';
-import { Search, SquarePen, Trash2, Plus, GraduationCap } from 'lucide-react';
+import { Search, SquarePen, Trash2, Plus, GraduationCap, Check } from 'lucide-react';
 import { StoreContext } from '../../context/Storecontext';
 import axios from 'axios';
 import { toast } from 'react-toastify';
@@ -55,12 +55,14 @@ const onChangeHandler = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectE
   setData(data => ({ ...data, [name]: value }));
 };
 
-// A lecturer can be assigned several courses from the multi-select.
-const handleCoursesChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-  const selected = Array.from(event.target.selectedOptions, (o) => o.value).filter(
-    (v) => v !== ""
-  );
-  setData((data) => ({ ...data, courses: selected }));
+// Toggle a course on/off for the lecturer — click to add, click again to remove.
+const toggleCourse = (course: string) => {
+  setData((data) => ({
+    ...data,
+    courses: data.courses.includes(course)
+      ? data.courses.filter((c) => c !== course)
+      : [...data.courses, course],
+  }));
 };
 
 const onSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -214,23 +216,43 @@ useEffect(() => {
         />
       </div>
       <div>
-        <label htmlFor="course-select" className="block text-sm font-semibold text-b-blue mb-1.5">
+        <label className="block text-sm font-semibold text-b-blue mb-1.5">
           Courses
+          {data.courses.length > 0 && (
+            <span className="ml-1 font-normal text-gray-400">
+              ({data.courses.length} selected)
+            </span>
+          )}
         </label>
-        <select
-          name="courses"
-          id="course-select"
-          className={`${fieldClass} min-h-[120px]`}
-          onChange={handleCoursesChange}
-          value={data.courses}
-          multiple
-        >
-          {courses.map((course: any, i: number) => (
-            <option key={i} value={course}>{course}</option>
-          ))}
-        </select>
+        {courses.length === 0 ? (
+          <p className="text-xs text-gray-400 font-light py-2">
+            No courses available yet — add courses first.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto rounded-[10px] border border-[#D8DEEC] bg-[#F7F9FD] p-2.5">
+            {courses.map((course: any, i: number) => {
+              const selected = data.courses.includes(course);
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => toggleCourse(course)}
+                  aria-pressed={selected}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    selected
+                      ? 'border-accent bg-accent text-white'
+                      : 'border-[#D8DEEC] bg-white text-b-blue hover:border-accent'
+                  }`}
+                >
+                  {selected && <Check size={14} />}
+                  {course}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <p className="text-[11px] text-gray-400 font-light mt-1.5">
-          Hold Ctrl (or Cmd) to select every course this lecturer teaches.
+          Click each course this lecturer teaches. Click again to remove.
         </p>
       </div>
       <div>
