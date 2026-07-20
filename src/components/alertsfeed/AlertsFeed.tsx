@@ -9,6 +9,8 @@ type Alert = {
   type?: 'cancellation' | 'change' | 'info';
   className?: string;
   level?: number;
+  course?: string;
+  day?: string;
   message?: string;
   createdAt?: string;
 };
@@ -96,6 +98,11 @@ const AlertsFeed = ({ alerts }: { alerts: Alert[] }) => {
                   {a.className && (
                     <span className="text-[13px] font-semibold text-b-blue">
                       {cohortLabel(a.className, a.level)}
+                    </span>
+                  )}
+                  {(a.course || a.day) && (
+                    <span className="text-[11px] font-medium text-gray-500">
+                      {[a.course, a.day].filter(Boolean).join(' · ')}
                     </span>
                   )}
                   <span className="ml-auto text-[11px] font-light text-gray-400">

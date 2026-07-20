@@ -100,9 +100,15 @@ const Lecturerinfo = () => {
   const sendAlert = async ({
     type,
     message,
+    course,
+    day,
+    time,
   }: {
     type: 'cancellation' | 'change';
     message: string;
+    course?: string;
+    day?: string;
+    time?: string;
   }): Promise<boolean> => {
     if (!notifyTarget) return false;
     try {
@@ -112,6 +118,9 @@ const Lecturerinfo = () => {
           className: notifyTarget.className,
           semester: notifyTarget.semester,
           level: notifyTarget.level,
+          course,
+          day,
+          time,
           type,
           message,
         },
@@ -125,13 +134,12 @@ const Lecturerinfo = () => {
           : ' Posted in-app (SMS not sent).';
         toast.success(
           `${
-            type === 'cancellation' ? 'Class cancelled' : 'Change announced'
+            type === 'cancellation' ? 'Cancellation notice sent' : 'Change announced'
           } — notified ${r.students || 0} student${
             r.students === 1 ? '' : 's'
           }.${smsNote}`
         );
         await fetchAlerts();
-        if (type === 'cancellation') await fetchTimetable();
         return true;
       }
       toast.error(response.data.message || 'Could not send the alert.');
@@ -537,6 +545,13 @@ const Lecturerinfo = () => {
                                         semester,
                                         className: cohort.className,
                                         level: cohort.level,
+                                        sessions: (cohort.items || []).map(
+                                          (it: any) => ({
+                                            course: it.course,
+                                            day: it.day,
+                                            time: it.time,
+                                          })
+                                        ),
                                       })
                                     }
                                     aria-label={`Notify or cancel ${label}`}
@@ -631,11 +646,7 @@ const Lecturerinfo = () => {
         target={notifyTarget}
         onClose={() => setNotifyTarget(null)}
         onSend={sendAlert}
-        cancelNote={`This cancels your sessions for ${
-          notifyTarget
-            ? cohortLabel(notifyTarget.className, notifyTarget.level)
-            : 'the class'
-        } and notifies its students. Other lecturers' sessions on this class are not affected.`}
+        cancelNote="This tells the class's students the selected course won't hold (on the chosen day). Nothing is removed — the course stays on the timetable and runs again at its next slot."
       />
     </div>
   );

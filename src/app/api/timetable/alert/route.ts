@@ -10,17 +10,19 @@ const VALID_TYPES: AlertType[] = ['cancellation', 'change', 'info'];
 
 /**
  * Raise a change/cancellation alert for a class. Notifies the class's students
- * (matched on program + level) and its lecturers by SMS, and records the alert
- * so it appears in their in-app feeds.
+ * (matched on program + level) and the affected lecturer by SMS, and records
+ * the alert so it appears in their in-app feeds.
  *
- * Body: { className, semester?, type, message? }
- *   type 'cancellation' also removes the class's sessions from the timetable;
- *   'change' / 'info' are announcements only.
+ * Body: { className, semester?, level?, course?, day?, time?, type, message? }
+ *   A cancellation is a one-off notice that a course won't hold (optionally on a
+ *   specific day). Nothing is removed from the timetable — the recurring session
+ *   stays and runs again at its next slot. 'change' / 'info' are announcements.
  */
 export async function POST(request: Request) {
   try {
     await connectDB();
-    const { className, semester, level, type, message } = await request.json();
+    const { className, semester, level, course, day, time, type, message } =
+      await request.json();
 
     if (!className || typeof className !== 'string') {
       return NextResponse.json(
@@ -32,8 +34,10 @@ export async function POST(request: Request) {
     const canonicalSemester = semester ? normalizeSemester(semester) : undefined;
     const lvl = level != null && level !== '' ? Number(level) : undefined;
 
-    // Resolve the cohort's lecturers from the current timetable *before* any
-    // cancellation removes those sessions.
+    // Resolve the affected lecturers from the current timetable. When a course
+    // (and day) is given, scope to just that session's lecturer. A cancellation
+    // never removes anything — the recurring session stays and runs again at its
+    // next slot; this only notifies and records the notice.
     const docs = await TimetableModel.find({}).exec();
     const lecturerNames = Array.from(
       new Set(
@@ -43,27 +47,22 @@ export async function POST(request: Request) {
             (s: any) =>
               s?.className === className &&
               (!canonicalSemester || s?.Semester === canonicalSemester) &&
-              (lvl == null || Number(s?.level) === lvl)
+              (lvl == null || Number(s?.level) === lvl) &&
+              (!course || s?.course === course) &&
+              (!day || s?.day === day)
           )
           .map((s: any) => s?.lecturer)
           .filter(Boolean)
       )
     ) as string[];
 
-    // A cancellation pulls the cohort's sessions off the timetable so it also
-    // disappears from everyone's view, not just sends a message.
-    if (alertType === 'cancellation') {
-      const match: Record<string, any> = { className };
-      if (canonicalSemester) match.Semester = canonicalSemester;
-      if (lvl != null) match.level = lvl;
-      await TimetableModel.updateMany({}, { $pull: { timetable: match } });
-      await TimetableModel.deleteMany({ timetable: { $size: 0 } });
-    }
-
     const result = await dispatchClassAlert({
       className,
       level: lvl,
       semester: canonicalSemester,
+      course,
+      day,
+      time,
       type: alertType,
       message,
       lecturerNames,
@@ -73,7 +72,7 @@ export async function POST(request: Request) {
       success: true,
       message:
         alertType === 'cancellation'
-          ? `${className} cancelled and everyone affected was notified.`
+          ? `${course || className} cancellation notice sent.`
           : `Alert sent for ${className}.`,
       sms: result.sms,
       recipients: result.recipients,

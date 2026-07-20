@@ -11,6 +11,10 @@ interface DispatchInput {
   className: string;
   // Cohort level, when the alert targets a single level of the programme.
   level?: number;
+  // Cancellation only: the course that won't hold, and the day it applies to.
+  course?: string;
+  day?: string;
+  time?: string;
   semester?: string;
   type: AlertType;
   message: string;
@@ -49,6 +53,8 @@ export function defaultAlertMessage(
 export async function dispatchClassAlert({
   className,
   level,
+  course,
+  day,
   semester,
   type,
   message,
@@ -82,6 +88,8 @@ export async function dispatchClassAlert({
     type,
     className,
     level,
+    course,
+    day,
     semester,
     message: body,
     lecturerNames,

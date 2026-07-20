@@ -443,12 +443,17 @@ const Dashboard = () => {
   // ---- Change / cancellation alerts --------------------------------------
   const openNotify = (
     semester: string,
-    cohort: { className: string; level?: number }
+    cohort: { className: string; level?: number; items: any[] }
   ) =>
     setNotifyTarget({
       semester,
       className: cohort.className,
       level: cohort.level,
+      sessions: (cohort.items || []).map((it: any) => ({
+        course: it.course,
+        day: it.day,
+        time: it.time,
+      })),
     });
 
   // Dispatch the alert; returns true so the dialog closes on success. A
@@ -456,9 +461,15 @@ const Dashboard = () => {
   const sendAlert = async ({
     type,
     message,
+    course,
+    day,
+    time,
   }: {
     type: 'cancellation' | 'change';
     message: string;
+    course?: string;
+    day?: string;
+    time?: string;
   }): Promise<boolean> => {
     if (!notifyTarget) return false;
     try {
@@ -466,6 +477,9 @@ const Dashboard = () => {
         className: notifyTarget.className,
         semester: notifyTarget.semester,
         level: notifyTarget.level,
+        course,
+        day,
+        time,
         type,
         message,
       });
@@ -480,10 +494,9 @@ const Dashboard = () => {
           : ' Posted in-app (SMS not sent).';
         toast.success(
           `${
-            type === 'cancellation' ? 'Class cancelled' : 'Change announced'
+            type === 'cancellation' ? 'Cancellation notice sent' : 'Change announced'
           } — notified ${who}.${smsNote}`
         );
-        if (type === 'cancellation') await fetchTimetable();
         return true;
       }
       toast.error(response.data.message || 'Could not send the alert.');
@@ -1377,11 +1390,7 @@ const Dashboard = () => {
         target={notifyTarget}
         onClose={() => setNotifyTarget(null)}
         onSend={sendAlert}
-        cancelNote={`This removes ${
-          notifyTarget
-            ? cohortLabel(notifyTarget.className, notifyTarget.level)
-            : 'the class'
-        } from the timetable and notifies its students and lecturer(s).`}
+        cancelNote="This tells the class’s students and the course lecturer that the selected course won’t hold (on the chosen day). Nothing is removed — the course stays on the timetable and runs again at its next slot."
       />
     </div>
   );

@@ -15,6 +15,10 @@ const alertSchema = new mongoose.Schema(
     // Cohort level (100/200/300/400) when the alert targets a single level of
     // the programme; absent means it applies to the whole programme.
     level: { type: Number },
+    // For a cancellation: the course that won't hold, and the day it applies to
+    // (absent day = the course generally). The timetable itself is unchanged.
+    course: { type: String },
+    day: { type: String },
     semester: { type: String },
     message: { type: String, required: true },
     // Lecturer names teaching this class, resolved from the timetable at send
