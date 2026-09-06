@@ -14,6 +14,9 @@ const lecturerSchema = new mongoose.Schema({
   // Legacy single-course field — kept optional so older records still load and
   // schedule. New records use `courses`.
   course: { type: String },
+  // Opt-in for per-class SMS reminders. See the note on the student schema for
+  // why this defaults to true.
+  smsReminders: { type: Boolean, default: true },
 });
 
 const LecturerModel = (mongoose.models.lecturer ||

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { connectDB } from '../../../../lib/db';
 import { createToken } from '../../../../lib/auth';
 import { errorResponse } from '../../../../lib/apiError';
+import { parseLoginId } from '../../../../lib/loginId';
 import AdminModel from '../../../../models/admin';
 
 export async function POST(request: Request) {
@@ -10,7 +11,12 @@ export async function POST(request: Request) {
     await connectDB();
     const { id, password } = await request.json();
 
-    const user = await AdminModel.findOne({ id });
+    const loginId = parseLoginId(id);
+    if (loginId === null || typeof password !== 'string') {
+      return NextResponse.json({ success: false, message: 'ID or password is incorrect' });
+    }
+
+    const user = await AdminModel.findOne({ id: loginId });
     if (!user) {
       return NextResponse.json({ success: false, message: 'ID or password is incorrect' });
     }

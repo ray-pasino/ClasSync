@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { connectDB } from '../../../../lib/db';
 import { createToken } from '../../../../lib/auth';
 import { errorResponse } from '../../../../lib/apiError';
+import { parseLoginId } from '../../../../lib/loginId';
 import { hashDefaultLecturerPassword } from '../../../../lib/lecturerPassword';
 import LecturerModel from '../../../../models/lecturer';
 
@@ -11,7 +12,15 @@ export async function POST(request: Request) {
     await connectDB();
     const { id, password } = await request.json();
 
-    const user = await LecturerModel.findOne({ id });
+    const loginId = parseLoginId(id);
+    if (loginId === null) {
+      return NextResponse.json({ success: false, message: 'ID is incorrect' });
+    }
+    if (typeof password !== 'string') {
+      return NextResponse.json({ success: false, message: 'password is incorrect' });
+    }
+
+    const user = await LecturerModel.findOne({ id: loginId });
     if (!user) {
       return NextResponse.json({ success: false, message: 'ID is incorrect' });
     }

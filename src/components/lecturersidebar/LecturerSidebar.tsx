@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 // Reuse the admin sidebar styles so the collapse behaviour matches exactly.
 import '../sidebar/Sidebar.css';
@@ -26,6 +26,8 @@ const LecturerSidebar = ({
   const pathname = usePathname();
   const router = useRouter();
   const { url, token, setToken } = useContext(StoreContext);
+  // Optimistic first-paint value only — the effect below replaces it with the
+  // stored preference so the toggle reflects reality.
   const [smsOn, setSmsOn] = useState(true);
   // Mobile: the bell/avatar/logout icons each open their own modal on the slim
   // rail — the bell shows SMS settings, the avatar shows profile, the logout
@@ -38,28 +40,51 @@ const LecturerSidebar = ({
     typeof window !== 'undefined' &&
     window.matchMedia('(max-width: 768px)').matches;
 
-  // Toggle daily SMS reminders. Enabling asks the backend to send a
-  // confirmation text; the Arkesel API key lives only on the server.
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    (async () => {
+      try {
+        const response = await axios.get(`${url}/api/lecturer/notify`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (active && response.data.success) setSmsOn(response.data.enabled);
+      } catch (error) {
+        console.error('Error reading notification preference:', error);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [url, token]);
+
+  // Toggle per-class SMS reminders. The preference is stored server-side and
+  // is what the reminder job reads; the Arkesel API key never leaves the server.
   const handleSmsToggle = async () => {
     const next = !smsOn;
     setSmsOn(next);
-    if (!next) return;
     try {
       const response = await axios.post(
         `${url}/api/lecturer/notify`,
-        {},
+        { enabled: next },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      if (response.data.success) {
-        toast.success(
-          'You will now receive SMS notifications on your teaching schedule'
-        );
+      if (next) {
+        if (response.data.success) {
+          toast.success('You will now receive an SMS before each class you teach');
+        } else {
+          setSmsOn(Boolean(response.data.enabled));
+          toast.error(
+            response.data.message ?? 'Could not enable SMS reminders right now.'
+          );
+        }
       } else {
-        toast.error('Could not enable SMS notifications right now.');
+        toast.success('SMS reminders turned off');
       }
     } catch (error) {
-      console.error('Error enabling notifications:', error);
-      toast.error('Could not enable SMS notifications right now.');
+      console.error('Error updating notification preference:', error);
+      setSmsOn(!next);
+      toast.error('Could not update SMS reminders right now.');
     }
   };
 

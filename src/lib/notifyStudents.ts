@@ -5,7 +5,25 @@ const DEFAULT_MESSAGE =
   'Dear Student, your timetable for the semester has just been created. ' +
   'Log into your Students Portal to view your timetable.';
 
-type NotifyResult = { sent: boolean; count?: number; reason?: string };
+type NotifyResult = {
+  sent: boolean;
+  count?: number;
+  reason?: string;
+  // True when the request went to Arkesel in sandbox mode: validated and
+  // billed as nothing, with no message actually delivered. Surfaced so a
+  // sandbox run is never mistaken for a real send in logs or API responses.
+  sandbox?: boolean;
+};
+
+/**
+ * Arkesel's v2 API accepts `sandbox: true`, which validates and accepts the
+ * request without delivering or charging for anything. Enable it with
+ * ARKESEL_SANDBOX=true to exercise the full send path — real credentials, real
+ * recipients, real response handling — at zero cost.
+ */
+export function sandboxEnabled(): boolean {
+  return String(process.env.ARKESEL_SANDBOX ?? '').toLowerCase() === 'true';
+}
 
 // Arkesel's SMS v2 endpoint. Accepts a JSON body with many recipients at once.
 const ARKESEL_ENDPOINT = 'https://sms.arkesel.com/api/v2/sms/send';
@@ -61,6 +79,8 @@ export async function sendSms(
     return { sent: false, reason: 'no_recipients' };
   }
 
+  const sandbox = sandboxEnabled();
+
   try {
     const response = await fetch(ARKESEL_ENDPOINT, {
       method: 'POST',
@@ -69,13 +89,20 @@ export async function sendSms(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ sender, message, recipients }),
+      // Only send `sandbox` when it's on — Arkesel omits the field entirely for
+      // live sends rather than passing false.
+      body: JSON.stringify({
+        sender,
+        message,
+        recipients,
+        ...(sandbox ? { sandbox: true } : {}),
+      }),
     });
 
     const body = await response.text();
     if (!response.ok) {
       console.error(`[sendSms] Arkesel responded ${response.status}: ${body}`);
-      return { sent: false, reason: `arkesel_${response.status}` };
+      return { sent: false, reason: `arkesel_${response.status}`, sandbox };
     }
 
     // Arkesel returns { status: "success", ... } on a successful submission.
@@ -87,14 +114,16 @@ export async function sendSms(
     }
     if (status && status !== 'success') {
       console.error(`[sendSms] Arkesel rejected the request: ${body}`);
-      return { sent: false, reason: `arkesel_${status}` };
+      return { sent: false, reason: `arkesel_${status}`, sandbox };
     }
 
-    console.log(`[sendSms] SMS dispatched to ${recipients.length} recipient(s).`);
-    return { sent: true, count: recipients.length };
+    console.log(
+      `[sendSms] SMS ${sandbox ? 'accepted in SANDBOX mode (nothing delivered or billed)' : 'dispatched'} to ${recipients.length} recipient(s).`
+    );
+    return { sent: true, count: recipients.length, sandbox };
   } catch (error) {
     console.error('[sendSms] Error sending SMS:', error);
-    return { sent: false, reason: 'exception' };
+    return { sent: false, reason: 'exception', sandbox };
   }
 }
 

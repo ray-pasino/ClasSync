@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 // Reuse the admin sidebar styles so the collapse behaviour matches exactly.
 import '../sidebar/Sidebar.css';
@@ -26,6 +26,9 @@ const StudentSidebar = ({
   const pathname = usePathname();
   const router = useRouter();
   const { url, token, setToken } = useContext(StoreContext);
+  // Reflects the stored preference. Starts true only as the optimistic value
+  // for the first paint; the effect below replaces it with what the server
+  // actually has, so the toggle stops claiming "on" for someone opted out.
   const [smsOn, setSmsOn] = useState(true);
   // Mobile: the collapsed rail has no room for the SMS card, so the bell
   // opens this modal with the same copy + toggle the desktop card shows.
@@ -39,28 +42,57 @@ const StudentSidebar = ({
     typeof window !== 'undefined' &&
     window.matchMedia('(max-width: 768px)').matches;
 
-  // Toggle daily SMS reminders. Enabling asks the backend to send a
-  // confirmation text; the Arkesel API key lives only on the server.
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    (async () => {
+      try {
+        const response = await axios.get(`${url}/api/student/notify`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (active && response.data.success) setSmsOn(response.data.enabled);
+      } catch (error) {
+        // Leave the optimistic value in place — a failed read shouldn't make
+        // the toggle jump around.
+        console.error('Error reading notification preference:', error);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [url, token]);
+
+  // Toggle per-class SMS reminders. The preference is stored server-side and
+  // is what the reminder job reads; the Arkesel API key never leaves the server.
   const handleSmsToggle = async () => {
     const next = !smsOn;
     setSmsOn(next);
-    if (!next) return;
     try {
       const response = await axios.post(
         `${url}/api/student/notify`,
-        {},
+        { enabled: next },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      if (response.data.success) {
-        toast.success(
-          'You will now receive SMS notifications on your timetable schedule'
-        );
+      if (next) {
+        if (response.data.success) {
+          toast.success(
+            'You will now receive an SMS before each of your classes'
+          );
+        } else {
+          // The preference saved even when the confirmation text couldn't be
+          // sent, so report the reason rather than silently reverting.
+          setSmsOn(Boolean(response.data.enabled));
+          toast.error(
+            response.data.message ?? 'Could not enable SMS reminders right now.'
+          );
+        }
       } else {
-        toast.error('Could not enable SMS notifications right now.');
+        toast.success('SMS reminders turned off');
       }
     } catch (error) {
-      console.error('Error enabling notifications:', error);
-      toast.error('Could not enable SMS notifications right now.');
+      console.error('Error updating notification preference:', error);
+      setSmsOn(!next);
+      toast.error('Could not update SMS reminders right now.');
     }
   };
 
