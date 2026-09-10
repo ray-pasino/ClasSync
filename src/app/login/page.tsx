@@ -9,7 +9,6 @@ import { StoreContext } from '../../context/Storecontext';
 import {
   Eye,
   EyeOff,
-  GraduationCap,
   Presentation,
   UserCog,
   ArrowRight,
@@ -17,7 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-type RoleKey = 'student' | 'lecturer' | 'administrator';
+type RoleKey = 'lecturer' | 'administrator';
 
 type RoleConfig = {
   label: string;
@@ -31,16 +30,6 @@ type RoleConfig = {
 };
 
 const roles: Record<RoleKey, RoleConfig> = {
-  student: {
-    label: 'Student',
-    short: 'Student',
-    article: 'a',
-    Icon: GraduationCap,
-    endpoint: '/api/student/studentlogin',
-    redirect: '/studenttimetable',
-    idPlaceholder: 'Student ID',
-    reset: '/verifystudentinfo',
-  },
   lecturer: {
     label: 'Lecturer',
     short: 'Lecturer',
@@ -63,10 +52,10 @@ const roles: Record<RoleKey, RoleConfig> = {
   },
 };
 
-const roleOrder: RoleKey[] = ['student', 'lecturer', 'administrator'];
+const roleOrder: RoleKey[] = ['lecturer', 'administrator'];
 
 const isRoleKey = (value: string | null): value is RoleKey =>
-  value === 'student' || value === 'lecturer' || value === 'administrator';
+  value === 'lecturer' || value === 'administrator';
 
 const LoginForm = () => {
   const { url, setToken } = useContext(StoreContext);
@@ -75,7 +64,7 @@ const LoginForm = () => {
   const roleParam = searchParams.get('role');
 
   const [role, setRole] = useState<RoleKey>(
-    isRoleKey(roleParam) ? roleParam : 'student'
+    isRoleKey(roleParam) ? roleParam : 'lecturer'
   );
   const [data, setData] = useState({ id: '', password: '' });
   const [seePassword, setSeePassword] = useState(false);

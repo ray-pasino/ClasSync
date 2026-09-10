@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { BellRing, CalendarX, Megaphone, Info } from 'lucide-react';
+import Link from 'next/link';
+import { BellRing, CalendarX, Megaphone, Info, X } from 'lucide-react';
 import { cohortLabel } from '../../lib/match';
 
 type Alert = {
@@ -13,6 +14,7 @@ type Alert = {
   day?: string;
   message?: string;
   createdAt?: string;
+  dismissed?: boolean;
 };
 
 // Compact "x ago" from an ISO timestamp, degrading gracefully.
@@ -58,8 +60,23 @@ const TYPE_STYLES: Record<
 /**
  * Renders a list of recent class change/cancellation alerts. Shows nothing when
  * there are no alerts, so it can sit unconditionally in a page.
+ *
+ * Pass `onDismiss`/`onClearAll` to make the feed clearable; without them it
+ * renders read-only exactly as before.
  */
-const AlertsFeed = ({ alerts }: { alerts: Alert[] }) => {
+const AlertsFeed = ({
+  alerts,
+  onDismiss,
+  onClearAll,
+  busy = false,
+  manageHref,
+}: {
+  alerts: Alert[];
+  onDismiss?: (id: string) => void;
+  onClearAll?: () => void;
+  busy?: boolean;
+  manageHref?: string;
+}) => {
   if (!alerts || alerts.length === 0) return null;
 
   return (
@@ -74,6 +91,24 @@ const AlertsFeed = ({ alerts }: { alerts: Alert[] }) => {
         <span className="ml-auto text-[11px] font-medium tabular-nums text-gray-400 sm:text-xs">
           {alerts.length} recent
         </span>
+        {manageHref && (
+          <Link
+            href={manageHref}
+            className="text-[11px] font-medium text-accent transition-colors hover:text-b-blue sm:text-xs"
+          >
+            View all
+          </Link>
+        )}
+        {onClearAll && (
+          <button
+            type="button"
+            onClick={onClearAll}
+            disabled={busy}
+            className="text-[11px] font-medium text-gray-400 transition-colors hover:text-b-blue disabled:opacity-50 sm:text-xs"
+          >
+            Clear all
+          </button>
+        )}
       </div>
 
       <ul className="flex flex-col gap-2">
@@ -113,6 +148,18 @@ const AlertsFeed = ({ alerts }: { alerts: Alert[] }) => {
                   {a.message}
                 </p>
               </div>
+              {onDismiss && a._id && (
+                <button
+                  type="button"
+                  onClick={() => onDismiss(a._id as string)}
+                  disabled={busy}
+                  aria-label="Dismiss alert"
+                  title="Dismiss"
+                  className="-mr-1 mt-0.5 shrink-0 rounded-lg p-1 text-gray-400 transition-colors hover:bg-white/70 hover:text-b-blue disabled:opacity-50"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </li>
           );
         })}

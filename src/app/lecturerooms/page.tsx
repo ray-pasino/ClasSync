@@ -1,14 +1,15 @@
 'use client';
 
 
-import React, { useContext, useState, useEffect } from 'react';
+import React, { Suspense, useContext, useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/sidebar/Sidebar';
 import { Search, SquarePen, Trash2, Plus, DoorOpen } from 'lucide-react';
 import { StoreContext } from '../../context/Storecontext';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
-const Lecturerooms = () => {
+const LectureroomsInner = () => {
 
   const [clicked, setClicked] = useState(false);
   const [edit, setEdit] = useState(false);
@@ -77,7 +78,9 @@ const onSubmitHandler = async (event: React.FormEvent<HTMLFormElement>) => {
   }
 };
 
+const searchParams = useSearchParams();
 const [list, setList] = useState<any[]>([]);
+const [search, setSearch] = useState(searchParams.get('q') || '');
 
 ///fetching list from the database
 const fetchList = async () => {
@@ -184,6 +187,17 @@ useEffect(() => {
     </form>
   );
 
+  // Free-text filter behind the header's search box.
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? list.filter((room: any) =>
+        [room.roomname, room.capacity]
+          .join(' ')
+          .toLowerCase()
+          .includes(term)
+      )
+    : list;
+
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-page-bg">
       <Sidebar />
@@ -206,6 +220,9 @@ useEffect(() => {
                 <input
                   type="text"
                   placeholder="Search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search rooms"
                   className="search-input bg-transparent text-sm w-full font-light text-gray-500 placeholder:text-gray-400 focus:outline-none"
                 />
               </div>
@@ -226,7 +243,7 @@ useEffect(() => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-b-blue text-lg">All Rooms</h2>
               <span className="text-xs font-medium text-gray-400">
-                {list.length} {list.length === 1 ? 'room' : 'rooms'}
+                {filtered.length} {filtered.length === 1 ? 'room' : 'rooms'}
               </span>
             </div>
 
@@ -237,6 +254,12 @@ useEffect(() => {
                 </span>
                 <p className="text-sm text-gray-400 font-light max-w-xs">
                   No lecture rooms yet. Add your first room to get started.
+                </p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center text-center py-12">
+                <p className="text-sm text-gray-400 font-light max-w-xs">
+                  No rooms match “{search.trim()}”.
                 </p>
               </div>
             ) : (
@@ -252,7 +275,7 @@ useEffect(() => {
                       </tr>
                     </thead>
                     <tbody>
-                      {list.map((room: any, index: number) => (
+                      {filtered.map((room: any, index: number) => (
                         <tr key={index} className="border-b border-page-bg last:border-0">
                           <td className="py-4 pr-4 font-medium text-b-blue">{room.roomname}</td>
                           <td className="py-4 pr-4 text-gray-600">{room.capacity}</td>
@@ -284,7 +307,7 @@ useEffect(() => {
 
                 {/* Mobile cards */}
                 <div className="sm:hidden space-y-3">
-                  {list.map((room: any, index: number) => (
+                  {filtered.map((room: any, index: number) => (
                     <div
                       key={index}
                       className="rounded-xl border border-page-bg p-4 flex items-center justify-between gap-3"
@@ -364,5 +387,12 @@ useEffect(() => {
     </div>
   );
 };
+
+// useSearchParams needs a Suspense boundary for this page to keep prerendering.
+const Lecturerooms = () => (
+  <Suspense>
+    <LectureroomsInner />
+  </Suspense>
+);
 
 export default Lecturerooms;

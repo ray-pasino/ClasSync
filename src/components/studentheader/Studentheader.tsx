@@ -25,7 +25,7 @@ const Studentheader = () => {
       );
       setToken('');
       localStorage.removeItem('token');
-      router.push('/login?role=student');
+      router.push('/siplogin');
     } catch (error) {
       console.error('Error during logout:', error);
     }

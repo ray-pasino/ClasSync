@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useContext, useEffect } from 'react';
+import React, { Suspense, useState, useContext, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/sidebar/Sidebar';
 import { Search, SquarePen, Trash2, Plus, Presentation } from 'lucide-react';
 import { StoreContext } from '../../context/Storecontext';
@@ -32,7 +33,7 @@ const classCourseList = (c: any): CourseRow[] => {
   return [];
 };
 
-const Classes = () => {
+const ClassesInner = () => {
   const { url } = useContext(StoreContext);
   const [Clclicked, setClClicked] = useState(false);
   const [edit, setEdit] = useState(false);
@@ -98,7 +99,9 @@ const Classes = () => {
     }
   };
 
+  const searchParams = useSearchParams();
   const [list, setList] = useState<any[]>([]);
+  const [search, setSearch] = useState(searchParams.get('q') || '');
 
   const fetchList = async () => {
     const response = await axios.get(`${url}/api/class/list`);
@@ -371,6 +374,17 @@ const Classes = () => {
     </form>
   );
 
+  // Free-text filter behind the header's search box.
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? list.filter((sclass: any) =>
+        [sclass.className, sclass.semester, sclass.level, sclass.population, (sclass.unavailablerooms || []).join(' '), classCourseList(sclass).map((c) => c.course).join(' ')]
+          .join(' ')
+          .toLowerCase()
+          .includes(term)
+      )
+    : list;
+
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-page-bg">
       <Sidebar />
@@ -393,6 +407,9 @@ const Classes = () => {
                 <input
                   type="text"
                   placeholder="Search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search classs"
                   className="search-input bg-transparent text-sm w-full font-light text-gray-500 placeholder:text-gray-400 focus:outline-none"
                 />
               </div>
@@ -413,7 +430,7 @@ const Classes = () => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-b-blue text-lg">Available Classes</h2>
               <span className="text-xs font-medium text-gray-400">
-                {list.length} {list.length === 1 ? 'class' : 'classes'}
+                {filtered.length} {filtered.length === 1 ? 'class' : 'classes'}
               </span>
             </div>
 
@@ -424,6 +441,12 @@ const Classes = () => {
                 </span>
                 <p className="text-sm text-gray-400 font-light max-w-xs">
                   No classes yet. Add your first class to get started.
+                </p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center text-center py-12">
+                <p className="text-sm text-gray-400 font-light max-w-xs">
+                  No classes match “{search.trim()}”.
                 </p>
               </div>
             ) : (
@@ -441,7 +464,7 @@ const Classes = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {list.map((sclass: any, index: number) => (
+                      {filtered.map((sclass: any, index: number) => (
                         <tr key={index} className="border-b border-page-bg last:border-0 align-top">
                           <td className="py-4 pr-4 font-medium text-b-blue">{sclass.className}</td>
                           <td className="py-4 pr-4 text-gray-600">{sclass.population}</td>
@@ -487,7 +510,7 @@ const Classes = () => {
 
                 {/* Mobile / tablet cards */}
                 <div className="lg:hidden space-y-3">
-                  {list.map((sclass: any, index: number) => (
+                  {filtered.map((sclass: any, index: number) => (
                     <div key={index} className="rounded-xl border border-page-bg p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -578,5 +601,12 @@ const Classes = () => {
     </div>
   );
 };
+
+// useSearchParams needs a Suspense boundary for this page to keep prerendering.
+const Classes = () => (
+  <Suspense>
+    <ClassesInner />
+  </Suspense>
+);
 
 export default Classes;

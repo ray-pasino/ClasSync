@@ -10,10 +10,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { StoreContext } from '../../context/Storecontext';
-import { Bell, CalendarDays, LogOut } from 'lucide-react';
+import { Bell, BellRing, CalendarDays, LogOut } from 'lucide-react';
 
 const lecturerNav = [
   { title: 'My Schedule', link: '/lecturerinfo', Icon: CalendarDays },
+  { title: 'Alerts', link: '/lectureralerts', Icon: BellRing },
 ];
 
 const LecturerSidebar = ({

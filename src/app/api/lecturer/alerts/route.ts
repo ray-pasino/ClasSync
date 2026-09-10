@@ -20,10 +20,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, message: 'Lecturer not found' }, { status: 404 });
     }
 
-    const alerts = await AlertModel.find({ lecturerNames: lecturer.name })
+    const recent = await AlertModel.find({ lecturerNames: lecturer.name })
       .sort({ createdAt: -1 })
-      .limit(20)
+      .limit(50)
+      .lean()
       .exec();
+    const dismissed = new Set(
+      (lecturer.dismissedAlerts || []).map((id: any) => String(id))
+    );
+    // Flagged, not filtered — see the note on the student route.
+    const alerts = recent.map((a: any) => ({
+      ...a,
+      dismissed: dismissed.has(String(a._id)),
+    }));
 
     return NextResponse.json({ success: true, alerts });
   } catch (error) {

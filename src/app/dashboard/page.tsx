@@ -5,6 +5,7 @@ import './Dashboard.css';
 import Sidebar from '../../components/sidebar/Sidebar';
 import { StoreContext } from '../../context/Storecontext';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { toCanvas } from 'html-to-image';
@@ -30,13 +31,41 @@ import {
   CheckCircle2,
   Trash2,
   Megaphone,
+  MicOff,
+  Loader2,
 } from 'lucide-react';
 import NotifyDialog, {
   type NotifyTarget,
 } from '../../components/notifydialog/NotifyDialog';
 import { cohortLabel } from '../../lib/match';
+import { sidebardata } from '../../assets/assets';
 
 type GenReport = { unscheduled: any[]; warnings: string[] };
+
+// One jump-to entry in the dashboard search: a section of the admin area or a
+// record (lecturer, course, room, class) that lives on one of those sections.
+// Raw records kept alongside the search index so the assistant can answer
+// questions about them ("what capacity is C10?").
+type SearchData = {
+  rooms: any[];
+  courses: any[];
+  lecturers: any[];
+  classes: any[];
+};
+
+// A spoken/typed question the assistant could resolve from the admin's data.
+type Answer = { text: string; href?: string; term?: string };
+
+type SearchResult = {
+  key: string;
+  label: string;
+  detail?: string;
+  type: 'Page' | 'Lecturer' | 'Course' | 'Room' | 'Class';
+  href: string;
+  // What the destination page should filter by, when it differs from what the
+  // admin typed (an answer card jumping straight to one record).
+  term?: string;
+};
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -118,6 +147,23 @@ const Dashboard = () => {
   // placed, and soft warnings). Shown in the timetable modal.
   const [report, setReport] = useState<GenReport>({ unscheduled: [], warnings: [] });
   const [adminName, setAdminName] = useState('');
+  // Dashboard search + voice search.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchIndex, setSearchIndex] = useState<SearchResult[] | null>(null);
+  const [searchData, setSearchData] = useState<SearchData>({
+    rooms: [],
+    courses: [],
+    lecturers: [],
+    classes: [],
+  });
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [activeResult, setActiveResult] = useState(0);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [loadingTimetable, setLoadingTimetable] = useState(true);
@@ -514,6 +560,20 @@ const Dashboard = () => {
     fetchProgrammes();
   }, []);
 
+  // Close the search dropdown on an outside click, and make sure a live
+  // recognition session doesn't outlive the page.
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!searchBoxRef.current?.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
+
+  useEffect(() => () => recognitionRef.current?.abort?.(), []);
+
   useEffect(() => {
     fetchAdminInfo();
   }, [url, token]);
@@ -580,6 +640,437 @@ const Dashboard = () => {
   const changeMonth = (delta: number) =>
     setCalendarDate(new Date(year, month + delta, 1));
 
+  /* ===== Search + voice search ===== */
+
+  // Short synthesised chirp so starting and stopping the mic are audible
+  // without shipping an audio file: rising on unmute, falling on mute.
+  const playMicTone = (direction: 'on' | 'off') => {
+    try {
+      const AudioCtx =
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx: AudioContext = audioCtxRef.current || new AudioCtx();
+      audioCtxRef.current = ctx;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const now = ctx.currentTime;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(
+        direction === 'on' ? 660 : 520,
+        now
+      );
+      oscillator.frequency.exponentialRampToValueAtTime(
+        direction === 'on' ? 990 : 350,
+        now + 0.12
+      );
+      // Fade in and out so the tone doesn't click.
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.2);
+    } catch {
+      // Audio is a nicety — never let it break voice search.
+    }
+  };
+
+  // The index is pulled once, the first time the admin uses the box, so the
+  // dashboard's initial load isn't slowed down by four extra list calls.
+  const loadSearchIndex = async (): Promise<SearchData | null> => {
+    if (searchIndex) return searchData;
+    if (searchLoading) return null;
+    setSearchLoading(true);
+    try {
+      const [lecturers, courses, rooms, classes] = await Promise.all([
+        axios.get(`${url}/api/lecturer/list`),
+        axios.get(`${url}/api/course/list`),
+        axios.get(`${url}/api/room/list`),
+        axios.get(`${url}/api/class/list`),
+      ]);
+
+      const entries: SearchResult[] = sidebardata.map((page) => ({
+        key: `page-${page.link}`,
+        label: page.title,
+        detail: 'Go to section',
+        type: 'Page',
+        href: page.link,
+      }));
+
+      (lecturers.data?.data || []).forEach((l: any) =>
+        entries.push({
+          key: `lecturer-${l._id}`,
+          label: l.name,
+          detail: [l.department, l.email].filter(Boolean).join(' · '),
+          type: 'Lecturer',
+          href: '/lecturersavailable',
+        })
+      );
+      (courses.data?.data || []).forEach((c: any) =>
+        entries.push({
+          key: `course-${c._id}`,
+          label: `${c.code} — ${c.name}`,
+          detail: c.credithours ? `${c.credithours} credit hours` : undefined,
+          type: 'Course',
+          href: '/coursesavailable',
+        })
+      );
+      (rooms.data?.data || []).forEach((r: any) =>
+        entries.push({
+          key: `room-${r._id}`,
+          label: r.roomname,
+          detail: r.capacity ? `Capacity ${r.capacity}` : undefined,
+          type: 'Room',
+          href: '/lecturerooms',
+        })
+      );
+      (classes.data?.data || []).forEach((c: any) =>
+        entries.push({
+          key: `class-${c._id}`,
+          label: cohortLabel(c.className, c.level),
+          detail: c.semester,
+          type: 'Class',
+          href: '/classes',
+        })
+      );
+
+      const data: SearchData = {
+        rooms: rooms.data?.data || [],
+        courses: courses.data?.data || [],
+        lecturers: lecturers.data?.data || [],
+        classes: classes.data?.data || [],
+      };
+      setSearchIndex(entries);
+      setSearchData(data);
+      return data;
+    } catch (error) {
+      console.error('Error building search index:', error);
+      toast.error('Could not load search data right now.');
+      return null;
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  /* ===== Ask-a-question layer over the admin's own data ===== */
+
+  // Longest known name mentioned anywhere in the question wins, so "Computer
+  // Security" beats "Computer" when both are course names.
+  const mentioned = (question: string, items: any[], keys: string[]) => {
+    let best: any = null;
+    let bestLength = 0;
+    items.forEach((item) => {
+      keys.forEach((key) => {
+        const value = String(item?.[key] ?? '').toLowerCase().trim();
+        if (!value || value.length <= bestLength) return;
+        if (question.includes(value)) {
+          best = item;
+          bestLength = value.length;
+        }
+      });
+    });
+    return best as any;
+  };
+
+  const describeSlot = (entry: any) =>
+    `${entry.day} ${entry.time} in ${entry.room}`;
+
+  const answerQuestion = (
+    raw: string,
+    data: SearchData,
+    schedule: any[]
+  ): Answer | null => {
+    const q = raw.toLowerCase().trim().replace(/[?.!]+$/, '');
+    if (q.length < 3) return null;
+    const asks = (...words: string[]) => words.some((w) => q.includes(w));
+
+    const room = mentioned(q, data.rooms, ['roomname']);
+    const course = mentioned(q, data.courses, ['name', 'code']);
+    const lecturer = mentioned(q, data.lecturers, ['name']);
+    const cohort = mentioned(q, data.classes, ['className']);
+
+    const courseName = String(course?.name ?? '').toLowerCase();
+    const slotsFor = (predicate: (e: any) => boolean) =>
+      schedule.filter(predicate);
+
+    /* How many … */
+    if (asks('how many') && !asks('capacity', 'fit', 'seat')) {
+      if (asks('room')) return { text: `There are ${data.rooms.length} lecture rooms.`, href: '/lecturerooms' };
+      if (asks('course')) return { text: `There are ${data.courses.length} courses.`, href: '/coursesavailable' };
+      if (asks('lecturer')) return { text: `There are ${data.lecturers.length} lecturers.`, href: '/lecturersavailable' };
+      if (asks('class', 'cohort')) return { text: `There are ${data.classes.length} classes.`, href: '/classes' };
+    }
+
+    /* Room capacity */
+    if (room && asks('capacity', 'how many', 'fit', 'seat', 'big', 'size')) {
+      return {
+        text: `${room.roomname} has a capacity of ${room.capacity}.`,
+        href: '/lecturerooms',
+        term: room.roomname,
+      };
+    }
+
+    /* Who teaches a course */
+    if (course && asks('who', 'lecturer', 'teach', 'assigned', 'handle', 'take')) {
+      const scheduled = slotsFor(
+        (e) => String(e.course ?? '').toLowerCase() === courseName
+      );
+      const names = Array.from(
+        new Set(scheduled.map((e) => e.lecturer).filter(Boolean))
+      );
+      if (names.length) {
+        const where = scheduled[0] ? ` (${describeSlot(scheduled[0])})` : '';
+        return {
+          text: `${course.name} is taught by ${names.join(', ')}${where}.`,
+          href: '/lecturersavailable',
+          term: String(names[0]),
+        };
+      }
+      const assigned = data.lecturers.filter((l: any) =>
+        [...(l.courses || []), l.course]
+          .filter(Boolean)
+          .some((c: string) => c.toLowerCase() === courseName)
+      );
+      if (assigned.length) {
+        return {
+          text: `${course.name} is assigned to ${assigned
+            .map((l: any) => l.name)
+            .join(', ')}, but it isn't on the generated timetable yet.`,
+          href: '/lecturersavailable',
+          term: assigned[0].name,
+        };
+      }
+      return {
+        text: `No lecturer is assigned to ${course.name} yet.`,
+        href: '/lecturersavailable',
+      };
+    }
+
+    /* What does a lecturer teach */
+    if (lecturer && asks('teach', 'course', 'handle', 'take')) {
+      const taught = Array.from(
+        new Set(
+          schedule
+            .filter(
+              (e) =>
+                String(e.lecturer ?? '').toLowerCase() ===
+                String(lecturer.name).toLowerCase()
+            )
+            .map((e) => e.course)
+        )
+      );
+      // `course` is the legacy single-course field and usually repeats one of
+      // `courses`, so de-duplicate before reading them back.
+      const list = taught.length
+        ? taught
+        : Array.from(
+            new Set(
+              [...(lecturer.courses || []), lecturer.course].filter(Boolean)
+            )
+          );
+      return {
+        text: list.length
+          ? `${lecturer.name} teaches ${list.join(', ')}.`
+          : `${lecturer.name} has no courses assigned yet.`,
+        href: '/lecturersavailable',
+        term: lecturer.name,
+      };
+    }
+
+    /* Contact details */
+    if (lecturer && asks('email', 'phone', 'contact', 'number')) {
+      const parts = [
+        lecturer.email && `email ${lecturer.email}`,
+        lecturer.phone && `phone ${lecturer.phone}`,
+      ].filter(Boolean);
+      return {
+        text: parts.length
+          ? `${lecturer.name}: ${parts.join(', ')}.`
+          : `No contact details are stored for ${lecturer.name}.`,
+        href: '/lecturersavailable',
+        term: lecturer.name,
+      };
+    }
+
+    /* When / where does something run */
+    if (asks('when', 'what time', 'what day', 'where', 'which room', 'what room')) {
+      const target = course || cohort || lecturer;
+      if (target) {
+        const slots = slotsFor((e) => {
+          if (course) return String(e.course ?? '').toLowerCase() === courseName;
+          if (cohort)
+            return (
+              String(e.className ?? '').toLowerCase() ===
+              String(cohort.className).toLowerCase()
+            );
+          return (
+            String(e.lecturer ?? '').toLowerCase() ===
+            String(lecturer.name).toLowerCase()
+          );
+        });
+        if (!slots.length) {
+          return {
+            text: `Nothing is scheduled for ${
+              course?.name || cohort?.className || lecturer?.name
+            } on the current timetable.`,
+          };
+        }
+        const label = course?.name || cohort?.className || lecturer?.name;
+        return {
+          text: `${label}: ${slots
+            .slice(0, 3)
+            .map(describeSlot)
+            .join('; ')}${slots.length > 3 ? `, +${slots.length - 3} more` : ''}.`,
+        };
+      }
+    }
+
+    /* Class size / level */
+    if (cohort && asks('population', 'how many student', 'size', 'level', 'semester')) {
+      const bits = [
+        cohort.population && `${cohort.population} students`,
+        cohort.level && `Level ${cohort.level}`,
+        cohort.semester,
+      ].filter(Boolean);
+      return {
+        text: `${cohort.className}: ${bits.join(', ')}.`,
+        href: '/classes',
+        term: cohort.className,
+      };
+    }
+
+    /* Course credit hours */
+    if (course && asks('credit', 'hours')) {
+      return {
+        text: `${course.code} ${course.name} is ${course.credithours} credit hours.`,
+        href: '/coursesavailable',
+        term: course.code,
+      };
+    }
+
+    return null;
+  };
+
+  const speak = (text: string) => {
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      synth.cancel();
+      synth.speak(new SpeechSynthesisUtterance(text));
+    } catch {
+      // Speaking the answer is a bonus; the card still shows it.
+    }
+  };
+
+  const query = searchQuery.trim().toLowerCase();
+  const searchResults =
+    query.length > 0 && searchIndex
+      ? searchIndex
+          .filter(
+            (entry) =>
+              entry.label.toLowerCase().includes(query) ||
+              (entry.detail || '').toLowerCase().includes(query)
+          )
+          .slice(0, 8)
+      : [];
+
+  const answer = searchIndex
+    ? answerQuestion(searchQuery, searchData, timetable)
+    : null;
+
+  const openResult = (result: SearchResult) => {
+    setSearchOpen(false);
+    const term = (result.term ?? searchQuery).trim();
+    setSearchQuery('');
+    // Section links open unfiltered; a record carries the term across so the
+    // destination page's own search box opens already filtered to it.
+    router.push(
+      result.type === 'Page' || !term
+        ? result.href
+        : `${result.href}?q=${encodeURIComponent(term)}`
+    );
+  };
+
+  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setSearchOpen(false);
+      return;
+    }
+    if (!searchResults.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveResult((i) => (i + 1) % searchResults.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveResult(
+        (i) => (i - 1 + searchResults.length) % searchResults.length
+      );
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      openResult(searchResults[Math.min(activeResult, searchResults.length - 1)]);
+    }
+  };
+
+  const toggleVoiceSearch = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    // Firefox has no Web Speech recognition, so say so rather than leaving the
+    // button looking broken.
+    if (!SpeechRecognitionCtor) {
+      toast.info(
+        'Voice search needs Chrome, Edge or Safari — type your search instead.'
+      );
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = 'en-GH';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = async (event: any) => {
+      const transcript = (event.results?.[0]?.[0]?.transcript || '').trim();
+      if (!transcript) return;
+      setSearchQuery(transcript);
+      setActiveResult(0);
+      setSearchOpen(true);
+      // Wait for the data before answering, so a question asked as the very
+      // first action still gets a real answer rather than silence.
+      const data = (await loadSearchIndex()) || searchData;
+      const spoken = answerQuestion(transcript, data, timetable);
+      if (spoken) speak(spoken.text);
+    };
+    recognition.onerror = (event: any) => {
+      if (event.error === 'not-allowed') {
+        toast.error('Microphone access was blocked for this site.');
+      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        toast.error('Voice search could not start. Please try again.');
+      }
+    };
+    recognition.onend = () => {
+      setListening(false);
+      playMicTone('off');
+    };
+
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+      setListening(true);
+      playMicTone('on');
+    } catch {
+      setListening(false);
+    }
+  };
+
   return (
     <div className="dashboard flex">
       <Sidebar initials={initials} name={adminName} lowerMobileNav />
@@ -594,21 +1085,116 @@ const Dashboard = () => {
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-b-blue shrink-0 -mt-1.5 ml-2 sm:mt-0 sm:ml-0">
                 Dashboard
               </h1>
-              <div className="flex items-center gap-2.5 w-full sm:w-auto sm:shrink-0 max-sm:mt-3">
-                <div className="flex items-center gap-2.5 bg-white rounded-xl px-4 h-11 lg:h-12 flex-1 sm:flex-none sm:w-56 md:w-64 lg:w-72 xl:w-96 border border-[#E8ECF6]">
-                  <Search size={18} className="text-gray-400 shrink-0" />
-                  <input
-                    type="text"
-                    placeholder="Search"
-                    className="search-input bg-transparent text-sm w-full font-light text-gray-500 placeholder:text-gray-400"
-                  />
+              <div
+                ref={searchBoxRef}
+                className="flex items-center gap-2.5 w-full sm:w-auto sm:shrink-0 max-sm:mt-3"
+              >
+                <div className="relative flex-1 sm:flex-none sm:w-56 md:w-64 lg:w-72 xl:w-96">
+                  <div className="flex items-center gap-2.5 bg-white rounded-xl px-4 h-11 lg:h-12 border border-[#E8ECF6]">
+                    <Search size={18} className="text-gray-400 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Search lecturers, courses, rooms…"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setActiveResult(0);
+                        setSearchOpen(true);
+                      }}
+                      onFocus={() => {
+                        setSearchOpen(true);
+                        loadSearchIndex();
+                      }}
+                      onKeyDown={onSearchKeyDown}
+                      aria-label="Search the admin dashboard"
+                      className="search-input bg-transparent text-sm w-full font-light text-gray-500 placeholder:text-gray-400"
+                    />
+                    {searchLoading && (
+                      <Loader2
+                        size={16}
+                        className="animate-spin text-gray-300 shrink-0"
+                      />
+                    )}
+                  </div>
+
+                  {searchOpen && searchQuery.trim() && (
+                    <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-[#E8ECF6] bg-white py-1 shadow-lg">
+                      {answer && (
+                        <div className="border-b border-page-bg px-4 py-3">
+                          <p className="text-sm font-medium leading-relaxed text-b-blue">
+                            {answer.text}
+                          </p>
+                          {answer.href && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openResult({
+                                  key: 'answer',
+                                  label: answer.text,
+                                  type: 'Page',
+                                  href: answer.term
+                                    ? `${answer.href}?q=${encodeURIComponent(
+                                        answer.term
+                                      )}`
+                                    : (answer.href as string),
+                                })
+                              }
+                              className="mt-1 text-xs font-medium text-accent hover:underline"
+                            >
+                              Open in the system
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {searchResults.length === 0 && !answer ? (
+                        <p className="px-4 py-3 text-sm font-light text-gray-400">
+                          {searchLoading
+                            ? 'Searching…'
+                            : `No matches for “${searchQuery.trim()}”`}
+                        </p>
+                      ) : (
+                        searchResults.map((result, index) => (
+                          <button
+                            key={result.key}
+                            type="button"
+                            onMouseEnter={() => setActiveResult(index)}
+                            onClick={() => openResult(result)}
+                            className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors ${
+                              index === activeResult ? 'bg-page-bg' : ''
+                            }`}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-b-blue">
+                                {result.label}
+                              </span>
+                              {result.detail && (
+                                <span className="block truncate text-xs font-light text-gray-400">
+                                  {result.detail}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 rounded-md bg-page-bg px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                              {result.type}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
+
                 <button
                   type="button"
-                  aria-label="Voice search"
-                  className="bg-gctu-gold text-gold-ink rounded-xl h-11 w-11 lg:h-12 lg:w-12 flex items-center justify-center shrink-0 hover:brightness-105 transition-colors"
+                  onClick={toggleVoiceSearch}
+                  aria-label={listening ? 'Stop voice search' : 'Voice search'}
+                  aria-pressed={listening}
+                  className={`rounded-xl h-11 w-11 lg:h-12 lg:w-12 flex items-center justify-center shrink-0 transition-colors ${
+                    listening
+                      ? 'bg-red-500 text-white animate-pulse'
+                      : 'bg-gctu-gold text-gold-ink hover:brightness-105'
+                  }`}
                 >
-                  <Mic size={18} />
+                  {listening ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
               </div>
             </header>

@@ -40,6 +40,7 @@ const Studentstimetable = () => {
   const { url, token } = useContext(StoreContext);
   const [timetable, setTimetable] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [dismissingAlert, setDismissingAlert] = useState(false);
   const [StudentProgram, setStudentProgram] = useState('');
   const [studentLevel, setStudentLevel] = useState<number | null>(null);
   const [studentName, setStudentName] = useState('');
@@ -217,6 +218,28 @@ const Studentstimetable = () => {
     }
   };
 
+  // Dismissal is per-user and optimistic: the row disappears immediately and
+  // comes back if the request fails. The full history lives on /studentalerts.
+  const dismissAlerts = async (ids: string[]) => {
+    if (!ids.length) return;
+    const previous = alerts;
+    setAlerts((list) => list.filter((a: any) => !ids.includes(a._id)));
+    setDismissingAlert(true);
+    try {
+      await axios.post(
+        `${url}/api/student/alerts/dismiss`,
+        { alertIds: ids },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (error) {
+      console.error('Error dismissing alerts:', error);
+      setAlerts(previous);
+      toast.error('Could not dismiss that alert. Please try again.');
+    } finally {
+      setDismissingAlert(false);
+    }
+  };
+
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#F7F8FB]">
       <StudentSidebar initials={initials} name={studentName} />
@@ -317,7 +340,19 @@ const Studentstimetable = () => {
           </p>
         </header>
 
-        {!loading && <AlertsFeed alerts={alerts} />}
+        {!loading && (
+          <AlertsFeed
+            alerts={alerts.filter((a: any) => !a.dismissed)}
+            onDismiss={(id) => dismissAlerts([id])}
+            onClearAll={() =>
+              dismissAlerts(
+                alerts.filter((a: any) => !a.dismissed).map((a: any) => a._id)
+              )
+            }
+            busy={dismissingAlert}
+            manageHref="/studentalerts"
+          />
+        )}
 
         {loading ? (
           /* Skeleton — geometry mirrors the loaded layout (KPI cards, Today,

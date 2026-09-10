@@ -1,5 +1,6 @@
 const lecturerImage = '/assets/businessman-with-chart.jpg';
 const adminBlock = '/assets/adminblock.jpg';
+const adminBlock2 = '/adminblock2.jpg';
 const studygroup = '/assets/study-group-african-people.jpg';
 const logo = '/assets/logo.png';
 const admin = '/assets/sysadmin_03.jpg';
@@ -23,6 +24,7 @@ const dropdown = '/assets/dropdown.png';
 export const assets = {
   lecturerImage,
   adminBlock,
+  adminBlock2,
   studygroup,
   logo,
   admin,
@@ -39,6 +41,8 @@ export const assets = {
 };
 
 
+// Sample student used as the display fallback on the SIP noticeboard: any
+// profile row the signed-in record has no value for falls back to these.
 export const studentInfo = {
   name: 'ALEX ASAMOAH',
   indexnumber: 4211231920,
@@ -49,6 +53,10 @@ export const studentInfo = {
   session: 'MORNING',
   phone: '0235498675',
   campus: 'MAIN CAMPUS - ABEKA',
+  department: 'COMPUTER SCIENCE',
+  cohort: '2022/2023',
+  creditRequired: '',
+  creditTaken: 138,
 };
 
 

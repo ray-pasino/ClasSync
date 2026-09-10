@@ -41,12 +41,6 @@ const BannerInfo2 = () => {
           </Link>
           <div className="hidden sm:flex items-center gap-2">
             <Link
-              href="/login?role=student"
-              className="px-4 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:text-b-blue hover:bg-white transition-colors"
-            >
-              Student
-            </Link>
-            <Link
               href="/login?role=lecturer"
               className="px-4 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:text-b-blue hover:bg-white transition-colors"
             >

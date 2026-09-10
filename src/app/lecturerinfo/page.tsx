@@ -44,6 +44,7 @@ const Lecturerinfo = () => {
   const { url, token } = useContext(StoreContext);
   const [timetable, setTimetable] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [dismissingAlert, setDismissingAlert] = useState(false);
   const [lecturer, setLecturer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
@@ -279,6 +280,28 @@ const Lecturerinfo = () => {
     }
   };
 
+  // Dismissal is per-user and optimistic: the row disappears immediately and
+  // comes back if the request fails. The full history lives on /lectureralerts.
+  const dismissAlerts = async (ids: string[]) => {
+    if (!ids.length) return;
+    const previous = alerts;
+    setAlerts((list) => list.filter((a: any) => !ids.includes(a._id)));
+    setDismissingAlert(true);
+    try {
+      await axios.post(
+        `${url}/api/lecturer/alerts/dismiss`,
+        { alertIds: ids },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (error) {
+      console.error('Error dismissing alerts:', error);
+      setAlerts(previous);
+      toast.error('Could not dismiss that alert. Please try again.');
+    } finally {
+      setDismissingAlert(false);
+    }
+  };
+
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#F7F8FB]">
       <LecturerSidebar initials={initials} name={lecturerName} />
@@ -377,7 +400,19 @@ const Lecturerinfo = () => {
           </p>
         </header>
 
-        {!loading && <AlertsFeed alerts={alerts} />}
+        {!loading && (
+          <AlertsFeed
+            alerts={alerts.filter((a: any) => !a.dismissed)}
+            onDismiss={(id) => dismissAlerts([id])}
+            onClearAll={() =>
+              dismissAlerts(
+                alerts.filter((a: any) => !a.dismissed).map((a: any) => a._id)
+              )
+            }
+            busy={dismissingAlert}
+            manageHref="/lectureralerts"
+          />
+        )}
 
         {loading ? (
           /* Skeleton — geometry mirrors the loaded layout. */

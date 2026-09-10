@@ -26,12 +26,20 @@ export async function GET(request: Request) {
     const recent = await AlertModel.find({})
       .sort({ createdAt: -1 })
       .limit(100)
+      .lean()
       .exec();
+    const dismissed = new Set(
+      (student.dismissedAlerts || []).map((id: any) => String(id))
+    );
+    // Dismissed alerts are flagged rather than dropped, so the alerts page can
+    // still list them (and let the student restore one) while the timetable
+    // feed shows only what's active.
     const alerts = recent
       .filter((a: any) =>
         classMatchesStudent({ className: a.className, level: a.level }, student)
       )
-      .slice(0, 20);
+      .slice(0, 50)
+      .map((a: any) => ({ ...a, dismissed: dismissed.has(String(a._id)) }));
 
     return NextResponse.json({ success: true, alerts });
   } catch (error) {

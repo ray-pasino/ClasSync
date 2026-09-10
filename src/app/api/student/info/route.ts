@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   }
   try {
     await connectDB();
-    const user = await StudentModel.findById(userId);
+    const user = await StudentModel.findById(userId).select('-password');
     if (!user) {
       return NextResponse.json({ success: false, message: 'User not found' }, { status: 404 });
     }
