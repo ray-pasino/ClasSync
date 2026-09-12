@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import NotifyDialog, {
   type NotifyTarget,
+  type FreeSlot,
 } from '../../components/notifydialog/NotifyDialog';
 import { cohortLabel } from '../../lib/match';
 import { sidebardata } from '../../assets/assets';
@@ -499,23 +500,60 @@ const Dashboard = () => {
         course: it.course,
         day: it.day,
         time: it.time,
+        room: it.room,
       })),
     });
 
+  // Slots where this cohort, its lecturer and a room are all free, so a change
+  // can move a session somewhere that is genuinely empty. Asked of the server
+  // on every open: the browser's copy of the timetable can be minutes old, and
+  // another administrator may have filled the slot in between.
+  const loadFreeSlots = async ({
+    course,
+    day,
+    time,
+  }: {
+    course: string;
+    day: string;
+    time: string;
+  }): Promise<FreeSlot[]> => {
+    if (!notifyTarget) return [];
+    const params = new URLSearchParams({
+      className: notifyTarget.className,
+      semester: notifyTarget.semester,
+      course,
+      day,
+      time,
+    });
+    if (notifyTarget.level != null) params.set('level', String(notifyTarget.level));
+    const response = await axios.get(
+      `${url}/api/timetable/free-slots?${params.toString()}`
+    );
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Free slot lookup failed');
+    }
+    return response.data.data.slots as FreeSlot[];
+  };
+
   // Dispatch the alert; returns true so the dialog closes on success. A
-  // cancellation removes the class's sessions, so refresh the view afterwards.
+  // reschedule moves the session on the saved timetable, so the view is
+  // refreshed afterwards to show the new placement.
   const sendAlert = async ({
     type,
     message,
     course,
     day,
     time,
+    moveTo,
+    oneOff,
   }: {
     type: 'cancellation' | 'change';
     message: string;
     course?: string;
     day?: string;
     time?: string;
+    moveTo?: { day: string; time: string; room?: string };
+    oneOff?: boolean;
   }): Promise<boolean> => {
     if (!notifyTarget) return false;
     try {
@@ -528,6 +566,8 @@ const Dashboard = () => {
         time,
         type,
         message,
+        moveTo,
+        oneOff,
       });
       if (response.data.success) {
         const r = response.data.recipients || {};
@@ -537,12 +577,18 @@ const Dashboard = () => {
         } and ${r.lecturers || 0} lecturer${r.lecturers === 1 ? '' : 's'}`;
         const smsNote = sms.sent
           ? ` SMS sent to ${sms.count} number${sms.count === 1 ? '' : 's'}.`
+          : response.data.smsDeferred
+          ? ' The class reminder will carry the new details.'
           : ' Posted in-app (SMS not sent).';
-        toast.success(
-          `${
-            type === 'cancellation' ? 'Cancellation notice sent' : 'Change announced'
-          } — notified ${who}.${smsNote}`
-        );
+        const headline = response.data.moved
+          ? `${course} moved${response.data.moved.oneOff ? ' for this week' : ''}`
+          : type === 'cancellation'
+          ? 'Cancellation notice sent'
+          : 'Change announced';
+        toast.success(`${headline} — notified ${who}.${smsNote}`);
+        // Only a permanent move rewrites the saved timetable; a one-off leaves
+        // it alone by design, so there is nothing to refetch.
+        if (response.data.moved && !response.data.moved.oneOff) fetchTimetable();
         return true;
       }
       toast.error(response.data.message || 'Could not send the alert.');
@@ -1976,7 +2022,9 @@ const Dashboard = () => {
         target={notifyTarget}
         onClose={() => setNotifyTarget(null)}
         onSend={sendAlert}
-        cancelNote="This tells the class’s students and the course lecturer that the selected course won’t hold (on the chosen day). Nothing is removed — the course stays on the timetable and runs again at its next slot."
+        findFreeSlots={loadFreeSlots}
+        rescheduleKinds={['oneOff', 'permanent']}
+        cancelNote="This tells the class’s students and the course lecturer that the selected course won’t hold (on the chosen day). The course stays on the timetable and runs again at its next slot; only that occurrence’s reminder is withheld."
       />
     </div>
   );

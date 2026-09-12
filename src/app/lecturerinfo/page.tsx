@@ -27,6 +27,7 @@ import { toast } from 'react-toastify';
 import AlertsFeed from '../../components/alertsfeed/AlertsFeed';
 import NotifyDialog, {
   type NotifyTarget,
+  type FreeSlot,
 } from '../../components/notifydialog/NotifyDialog';
 import { cohortLabel } from '../../lib/match';
 
@@ -98,18 +99,52 @@ const Lecturerinfo = () => {
   // Raise a change/cancellation alert for one of this lecturer's own classes.
   // Returns true so the dialog closes on success. A cancellation removes this
   // lecturer's sessions, so refresh the schedule and alerts afterwards.
+  // Slots where this cohort, the lecturer and a room are all free. Asked of the
+  // server on every open, since the browser's copy of the timetable can be
+  // minutes old and another session may have taken the slot since.
+  const loadFreeSlots = async ({
+    course,
+    day,
+    time,
+  }: {
+    course: string;
+    day: string;
+    time: string;
+  }): Promise<FreeSlot[]> => {
+    if (!notifyTarget) return [];
+    const params = new URLSearchParams({
+      className: notifyTarget.className,
+      semester: notifyTarget.semester,
+      course,
+      day,
+      time,
+    });
+    if (notifyTarget.level != null)
+      params.set('level', String(notifyTarget.level));
+    const response = await axios.get(
+      `${url}/api/timetable/free-slots?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Free slot lookup failed');
+    }
+    return response.data.data.slots as FreeSlot[];
+  };
+
   const sendAlert = async ({
     type,
     message,
     course,
     day,
     time,
+    moveTo,
   }: {
     type: 'cancellation' | 'change';
     message: string;
     course?: string;
     day?: string;
     time?: string;
+    moveTo?: { day: string; time: string; room?: string };
   }): Promise<boolean> => {
     if (!notifyTarget) return false;
     try {
@@ -124,6 +159,7 @@ const Lecturerinfo = () => {
           time,
           type,
           message,
+          moveTo,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -132,11 +168,16 @@ const Lecturerinfo = () => {
         const sms = response.data.sms || {};
         const smsNote = sms.sent
           ? ` SMS sent to ${sms.count} number${sms.count === 1 ? '' : 's'}.`
+          : response.data.smsDeferred
+          ? ' This week’s class reminder will carry the new details.'
           : ' Posted in-app (SMS not sent).';
+        const headline = response.data.moved
+          ? `${course} moved for this week`
+          : type === 'cancellation'
+          ? 'Cancellation notice sent'
+          : 'Change announced';
         toast.success(
-          `${
-            type === 'cancellation' ? 'Cancellation notice sent' : 'Change announced'
-          } — notified ${r.students || 0} student${
+          `${headline} — notified ${r.students || 0} student${
             r.students === 1 ? '' : 's'
           }.${smsNote}`
         );
@@ -585,6 +626,7 @@ const Lecturerinfo = () => {
                                             course: it.course,
                                             day: it.day,
                                             time: it.time,
+                                            room: it.room,
                                           })
                                         ),
                                       })
@@ -681,7 +723,9 @@ const Lecturerinfo = () => {
         target={notifyTarget}
         onClose={() => setNotifyTarget(null)}
         onSend={sendAlert}
-        cancelNote="This tells the class's students the selected course won't hold (on the chosen day). Nothing is removed — the course stays on the timetable and runs again at its next slot."
+        findFreeSlots={loadFreeSlots}
+        rescheduleKinds={['oneOff']}
+        cancelNote="This tells the class's students the selected course won't hold (on the chosen day). The course stays on the timetable and runs again at its next slot; only that occurrence's reminder is withheld."
       />
     </div>
   );

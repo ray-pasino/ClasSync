@@ -4,8 +4,9 @@ import mongoose from 'mongoose';
 // students and lecturers can see it in-app even if SMS is down or opted out.
 const alertSchema = new mongoose.Schema(
   {
-    // 'cancellation' also removes the class's sessions from the timetable;
-    // 'change' and 'info' are announcements only.
+    // 'cancellation' is a one-off notice that the class won't hold: nothing is
+    // removed from the timetable, but the reminder for that occurrence is
+    // withheld (see lib/classReminders). 'change' and 'info' are announcements.
     type: {
       type: String,
       enum: ['cancellation', 'change', 'info'],
@@ -20,6 +21,22 @@ const alertSchema = new mongoose.Schema(
     course: { type: String },
     day: { type: String },
     semester: { type: String },
+    // A 'change' may also move the session on the timetable. Both placements are
+    // recorded so the feed can say what actually changed, and so the move is
+    // auditable after the timetable itself has moved on.
+    fromDay: { type: String },
+    fromTime: { type: String },
+    fromRoom: { type: String },
+    toDay: { type: String },
+    toTime: { type: String },
+    toRoom: { type: String },
+    // A one-off ("just this week") move: the timetable is deliberately left
+    // alone, so the class returns to its normal slot next week. The reminder
+    // pipeline withholds the old slot's reminder for that single occurrence and
+    // sends one for the new slot instead — the same one-occurrence rule a
+    // cancellation follows. A permanent move (admin) leaves this false, because
+    // the timetable itself has been rewritten.
+    oneOff: { type: Boolean, default: false },
     message: { type: String, required: true },
     // Lecturer names teaching this class, resolved from the timetable at send
     // time. Used to surface the alert to the right lecturers and to SMS them.
@@ -28,6 +45,9 @@ const alertSchema = new mongoose.Schema(
     smsSent: { type: Boolean, default: false },
     smsCount: { type: Number, default: 0 },
     smsReason: { type: String },
+    // Set when a reschedule deliberately sends no SMS because the class's own
+    // reminder has not gone out yet and will carry the new details instead.
+    smsDeferred: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

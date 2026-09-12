@@ -21,6 +21,18 @@ interface DispatchInput {
   // Lecturer names teaching the class (from the current timetable). SMS'd and
   // used to scope the in-app feed to the right lecturers.
   lecturerNames?: string[];
+  // Where the session sat before and after a reschedule, when the change moved
+  // it on the timetable.
+  from?: { day: string; time: string; room?: string } | null;
+  to?: { day: string; time: string; room?: string } | null;
+  // A one-off ("just this week") move, which leaves the timetable untouched.
+  oneOff?: boolean;
+  // Suppress the SMS because the class's own reminder has not gone out yet and
+  // will carry the new details. The alert is still persisted and still appears
+  // in the in-app feed immediately.
+  deferSms?: boolean;
+  // Recorded alongside the alert so the admin can see why no SMS was sent.
+  smsNote?: string;
 }
 
 // Compose a sensible default SMS/announcement body when the admin doesn't
@@ -59,6 +71,11 @@ export async function dispatchClassAlert({
   type,
   message,
   lecturerNames = [],
+  from = null,
+  to = null,
+  oneOff = false,
+  deferSms = false,
+  smsNote,
 }: DispatchInput) {
   await connectDB();
 
@@ -82,7 +99,9 @@ export async function dispatchClassAlert({
         .filter(Boolean)
     : [];
 
-  const sms = await sendSms([...studentPhones, ...lecturerPhones], body);
+  const sms = deferSms
+    ? { sent: false, count: 0, reason: smsNote ?? 'reminder_will_carry' }
+    : await sendSms([...studentPhones, ...lecturerPhones], body);
 
   const alert = await AlertModel.create({
     type,
@@ -91,11 +110,19 @@ export async function dispatchClassAlert({
     course,
     day,
     semester,
+    fromDay: from?.day,
+    fromTime: from?.time,
+    fromRoom: from?.room,
+    toDay: to?.day,
+    toTime: to?.time,
+    toRoom: to?.room,
+    oneOff,
     message: body,
     lecturerNames,
     smsSent: sms.sent,
     smsCount: sms.count ?? 0,
     smsReason: sms.reason,
+    smsDeferred: deferSms,
   });
 
   return {

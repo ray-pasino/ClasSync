@@ -3,7 +3,9 @@ import StudentModel from '../models/student';
 import LecturerModel from '../models/lecturer';
 import TimetableModel from '../models/timetable';
 import ReminderLogModel from '../models/reminderLog';
-import { classMatchesStudent, cohortLabel } from './match';
+import AlertModel from '../models/alert';
+import { classMatchesStudent, cohortLabel, normalizeLabel } from './match';
+import { normalizeSemester } from './timetable';
 import { sendSms, sandboxEnabled } from './notifyStudents';
 
 // Ghana keeps GMT+0 all year, so the default needs no DST handling — but read
@@ -82,6 +84,37 @@ export function parseStartMinutes(range: unknown): number | null {
 const sameDay = (a: unknown, b: unknown) =>
   String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The reminder log's unique key for one occurrence of one session.
+ *
+ * Sandbox runs get their own key space. Without this, testing at 10:35 on a
+ * Wednesday would claim the session and make the real 10:36 run skip it — a
+ * test that silently suppresses the very reminder it was verifying.
+ */
+export function reminderKey(
+  dateKey: string,
+  session: {
+    className?: string;
+    level?: number;
+    course?: string;
+    day?: string;
+    time?: string;
+  },
+  sandbox: boolean
+): string {
+  return [
+    sandbox ? 'sandbox' : 'live',
+    dateKey,
+    session.className ?? '',
+    session.level ?? '',
+    session.course ?? '',
+    session.day ?? '',
+    session.time ?? '',
+  ].join('|');
+}
+
 type Session = {
   className?: string;
   level?: number;
@@ -92,6 +125,171 @@ type Session = {
   day?: string;
   Semester?: string;
 };
+
+type CancellationNotice = {
+  className?: string;
+  level?: number;
+  course?: string;
+  day?: string;
+  semester?: string;
+  createdAt?: Date | string;
+};
+
+type RescheduleNotice = CancellationNotice & {
+  fromDay?: string;
+  fromTime?: string;
+  toDay?: string;
+  toTime?: string;
+  toRoom?: string;
+  // True when the timetable was deliberately left unchanged (see models/alert).
+  oneOff?: boolean;
+  lecturerNames?: string[];
+};
+
+/**
+ * Does this cancellation notice cover the occurrence of `session` starting at
+ * `startsAt`?
+ *
+ * A cancellation is a one-off: the recurring session stays on the timetable and
+ * runs again next week (see api/timetable/alert). So the notice suppresses the
+ * reminder for exactly the first occurrence that follows it — anything more
+ * than a week after it was raised is the next running of the class, which is
+ * reminded as normal.
+ *
+ * The notice's optional fields widen its reach rather than narrow it: no
+ * `course` means the whole cohort, no `day` means whichever day comes first, no
+ * `level` means every level of the programme. That mirrors how the alert route
+ * resolves recipients, so whoever was told the class is off is exactly who
+ * stops being reminded about it.
+ */
+/**
+ * Does a notice still apply to an occurrence starting at `startsAt`?
+ *
+ * Every notice in this module covers exactly one occurrence: the first one
+ * after it was raised. A week later the class is running again as timetabled,
+ * so the notice has expired. This is the rule cancellations follow, and one-off
+ * moves follow it too.
+ */
+function withinNoticeWindow(
+  notice: { createdAt?: Date | string },
+  startsAt: Date
+): boolean {
+  const raised = notice.createdAt ? new Date(notice.createdAt).getTime() : NaN;
+  if (!Number.isFinite(raised)) return false;
+  const due = startsAt.getTime();
+  return raised <= due && raised > due - WEEK_MS;
+}
+
+/** Does the notice name this cohort, level, course and semester? */
+function noticeMatchesClass(
+  notice: CancellationNotice,
+  session: Session
+): boolean {
+  if (normalizeLabel(notice.className) !== normalizeLabel(session.className)) {
+    return false;
+  }
+  if (notice.level != null && Number(notice.level) !== Number(session.level)) {
+    return false;
+  }
+  if (notice.course && normalizeLabel(notice.course) !== normalizeLabel(session.course)) {
+    return false;
+  }
+  if (
+    notice.semester &&
+    session.Semester &&
+    normalizeSemester(notice.semester) !== normalizeSemester(session.Semester)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function cancelsSession(
+  notice: CancellationNotice,
+  session: Session,
+  startsAt: Date
+): boolean {
+  // A notice carrying a destination is a move, not a cancellation: the class is
+  // still holding, elsewhere. The run loop already separates the two by type,
+  // but the check belongs here as well so the function cannot be misread — the
+  // fields a move fills in overlap exactly with the ones matched below.
+  if ((notice as RescheduleNotice).toDay || (notice as RescheduleNotice).toTime) {
+    return false;
+  }
+  if (!withinNoticeWindow(notice, startsAt)) return false;
+  if (!noticeMatchesClass(notice, session)) return false;
+  if (notice.day && !sameDay(notice.day, session.day)) return false;
+  return true;
+}
+
+/**
+ * Has a one-off move taken this occurrence away from its timetabled slot?
+ *
+ * A "just this week" move leaves the timetable alone, so the session is still
+ * sitting there at its old day and time and would otherwise be reminded about
+ * as if nothing had happened. Withholding that reminder is the same act as
+ * withholding a cancelled class's — the class is not holding here today.
+ */
+export function movedAwayFrom(
+  notice: RescheduleNotice,
+  session: Session,
+  startsAt: Date
+): boolean {
+  if (!notice.oneOff || !notice.fromDay || !notice.fromTime) return false;
+  if (!withinNoticeWindow(notice, startsAt)) return false;
+  if (!noticeMatchesClass(notice, session)) return false;
+  return (
+    sameDay(notice.fromDay, session.day) &&
+    normalizeLabel(notice.fromTime) === normalizeLabel(session.time)
+  );
+}
+
+/**
+ * Was this occurrence moved here by a reschedule in the last week?
+ *
+ * A reschedule rewrites the session on the timetable, so the reminder already
+ * carries the new day, time and room — this only decides whether to flag the
+ * message as a change, so a student who has the old details in their head
+ * notices that something moved.
+ */
+export function rescheduledInto(
+  notice: RescheduleNotice,
+  session: Session,
+  startsAt: Date
+): boolean {
+  if (!notice.toDay || !notice.toTime) return false;
+  if (!withinNoticeWindow(notice, startsAt)) return false;
+  if (!noticeMatchesClass(notice, session)) return false;
+  return (
+    sameDay(notice.toDay, session.day) &&
+    normalizeLabel(notice.toTime) === normalizeLabel(session.time)
+  );
+}
+
+/**
+ * The session a one-off move stands in for: the class as it will actually run
+ * this week. It is assembled from the notice rather than read from the
+ * timetable, because by design nothing on the timetable was changed.
+ */
+export function virtualSession(notice: RescheduleNotice): Session {
+  return {
+    className: notice.className,
+    level: notice.level,
+    course: notice.course,
+    room: notice.toRoom,
+    time: notice.toTime,
+    day: notice.toDay,
+    lecturer: notice.lecturerNames?.[0],
+    Semester: notice.semester,
+  };
+}
+
+/** Short suffix flagging a moved class, kept brief to stay inside one SMS. */
+export function rescheduleNote(notice: RescheduleNotice, session: Session): string {
+  return notice.fromDay && !sameDay(notice.fromDay, session.day)
+    ? ` (moved from ${notice.fromDay})`
+    : ' (rescheduled)';
+}
 
 export type ReminderRunResult = {
   ranAt: string;
@@ -105,6 +303,12 @@ export type ReminderRunResult = {
   due: number;
   sent: number;
   skippedAlreadySent: number;
+  // Sessions whose reminder was withheld because a cancellation notice covers
+  // this week's occurrence.
+  skippedCancelled: number;
+  // Sessions withheld at their timetabled slot because a one-off move took this
+  // week's occurrence somewhere else. The new slot gets its own reminder.
+  skippedMoved: number;
   details: Array<Record<string, unknown>>;
 };
 
@@ -135,16 +339,60 @@ export async function runClassReminders({
     semesterFilter ? { semester: semesterFilter } : {}
   ).exec();
 
-  const due: Session[] = [];
+  // Notices are read before the scan, not after it: a class moved to a slot that
+  // holds nothing on the timetable would otherwise never be looked at, and its
+  // reminder would be the one thing the run had to do.
+  //
+  // Only the last week of notices can still be covering an upcoming session;
+  // anything older belongs to an occurrence that has already been and gone.
+  const recent = (await AlertModel.find(
+    {
+      type: { $in: ['cancellation', 'change'] },
+      createdAt: { $gte: new Date(now.getTime() - WEEK_MS) },
+    },
+    'type className level course day semester createdAt fromDay fromTime ' +
+      'toDay toTime toRoom oneOff lecturerNames'
+  ).exec()) as Array<RescheduleNotice & { type?: string }>;
+  const notices = recent.filter((a) => a.type === 'cancellation');
+  const moves = recent.filter((a) => a.type === 'change' && a.toDay && a.toTime);
+  const oneOffMoves = moves.filter((a) => a.oneOff);
+
+  // How long until a session starting at `time` today, or null when the label
+  // is unparseable or the slot is not inside the lead window.
+  const untilDue = (time?: string): number | null => {
+    const start = parseStartMinutes(time);
+    if (start === null) return null;
+    const until = start - minutes;
+    // Strictly after "now" so a class already under way isn't announced.
+    return until > 0 && until <= lead ? until : null;
+  };
+
+  // Each due session carries the instant it actually starts, so a notice can be
+  // matched against this week's occurrence rather than the recurring slot in
+  // the abstract.
+  const due: Array<{ session: Session; occursAt: Date }> = [];
   for (const doc of docs) {
     for (const session of (doc.timetable ?? []) as Session[]) {
       if (!sameDay(session?.day, dayName)) continue;
-      const start = parseStartMinutes(session?.time);
-      if (start === null) continue;
-      const until = start - minutes;
-      // Strictly after "now" so a class already under way isn't announced.
-      if (until > 0 && until <= lead) due.push(session);
+      const until = untilDue(session?.time);
+      if (until === null) continue;
+      due.push({
+        session,
+        occursAt: new Date(now.getTime() + until * 60 * 1000),
+      });
     }
+  }
+
+  // A one-off move exists only as an alert — the timetable still shows the
+  // class at its normal slot — so the occurrence it moves the class *to* has to
+  // be added to today's scan by hand.
+  for (const move of oneOffMoves) {
+    if (!sameDay(move.toDay, dayName)) continue;
+    const until = untilDue(move.toTime);
+    if (until === null) continue;
+    const occursAt = new Date(now.getTime() + until * 60 * 1000);
+    if (!withinNoticeWindow(move, occursAt)) continue;
+    due.push({ session: virtualSession(move), occursAt });
   }
 
   const result: ReminderRunResult = {
@@ -157,6 +405,8 @@ export async function runClassReminders({
     due: due.length,
     sent: 0,
     skippedAlreadySent: 0,
+    skippedCancelled: 0,
+    skippedMoved: 0,
     details: [],
   };
   if (due.length === 0) return result;
@@ -168,20 +418,36 @@ export async function runClassReminders({
     'program level phone'
   ).exec();
 
-  for (const session of due) {
+  for (const { session, occursAt } of due) {
     const label = cohortLabel(session.className, session.level);
-    // Sandbox runs get their own key space. Without this, testing at 10:35 on a
-    // Wednesday would claim the session and make the real 10:36 run skip it —
-    // a test that silently suppresses the very reminder it was verifying.
-    const key = [
-      sandbox ? 'sandbox' : 'live',
-      dateKey,
-      session.className ?? '',
-      session.level ?? '',
-      session.course ?? '',
-      session.day ?? '',
-      session.time ?? '',
-    ].join('|');
+
+    // A class that has been called off, or moved elsewhere just for this week,
+    // is not reminded about at its timetabled slot — not to the cohort and not
+    // to the lecturer. Both notices cover this week only, so next week's
+    // running of the same session is reminded as normal.
+    const cancelled = notices.find((notice) =>
+      cancelsSession(notice, session, occursAt)
+    );
+    const movedAway = cancelled
+      ? undefined
+      : oneOffMoves.find((notice) => movedAwayFrom(notice, session, occursAt));
+    if (cancelled || movedAway) {
+      if (cancelled) result.skippedCancelled += 1;
+      else result.skippedMoved += 1;
+      result.details.push({
+        course: session.course,
+        className: label,
+        time: session.time,
+        room: session.room,
+        skipped: cancelled ? 'cancelled' : 'moved',
+        noticeRaisedAt: (cancelled ?? movedAway)?.createdAt,
+        ...(movedAway
+          ? { movedTo: `${movedAway.toDay} ${movedAway.toTime}` }
+          : {}),
+      });
+      continue;
+    }
+    const key = reminderKey(dateKey, session, sandbox);
 
     const studentPhones = students
       .filter((s: any) =>
@@ -243,17 +509,24 @@ export async function runClassReminders({
     const startsAt = String(session.time ?? '').split('-')[0]?.trim();
     const where = session.room ? ` in ${session.room}` : '';
 
+    // A class moved here in the last week is flagged, so the reminder reads as
+    // a correction to whoever still has the old slot in mind. The new day, time
+    // and room are already right: the reschedule rewrote the timetable this
+    // reminder is built from.
+    const move = moves.find((m) => rescheduledInto(m, session, occursAt));
+    const note = move ? rescheduleNote(move, session) : '';
+
     const studentSms = studentPhones.length
       ? await sendSms(
           studentPhones,
-          `Reminder: ${session.course} starts at ${startsAt}${where}. (${label})`
+          `Reminder: ${session.course} starts at ${startsAt}${where}${note}. (${label})`
         )
       : { sent: false, reason: 'no_recipients' as const };
 
     const lecturerSms = lecturerPhones.length
       ? await sendSms(
           lecturerPhones,
-          `Reminder: you teach ${session.course} at ${startsAt}${where}. (${label})`
+          `Reminder: you teach ${session.course} at ${startsAt}${where}${note}. (${label})`
         )
       : { sent: false, reason: 'no_recipients' as const };
 
@@ -272,7 +545,7 @@ export async function runClassReminders({
       }
     );
 
-    result.details.push({ ...base, sent });
+    result.details.push({ ...base, sent, rescheduled: Boolean(move) });
   }
 
   return result;
